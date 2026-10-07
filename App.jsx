@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { supabase } from "./supabase.js";
 
 /* ==========================================================================
    CONFIG - change these values easily
@@ -6,12 +7,7 @@ import React, { useEffect, useRef, useState } from "react";
 const KINGDOM = "4161";
 const SITE_NAME = "XTiT";
 
-// Single admin password (prototype only - see note at the bottom).
-const ADMIN_PASSWORD = "xtit4161";
-
-const STORAGE_KEY = "xtit_mge_applications_4161";
-const SETTINGS_KEY = "xtit_mge_settings_4161";
-const SESSION_KEY = "xtit_admin_session";
+const BUCKET = "screenshots";
 
 const MAX_IMAGE_SIDE = 1400; // screenshots are downscaled to keep storage small
 const ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/webp"];
@@ -214,9 +210,9 @@ function StatusChecker() {
   const [id, setId] = useState("");
   const [result, setResult] = useState(null); // null | "none" | application
 
-  function check(e) {
+  async function check(e) {
     e.preventDefault();
-    const found = loadApplications().find((a) => a.governorId === id.trim());
+    const found = await checkStatus(id.trim());
     setResult(found || "none");
   }
 
@@ -244,7 +240,7 @@ function StatusChecker() {
 
         {result === "none" && (
           <p className="notice notice-warn">
-            No application was found for this Governor ID on this device.
+            No application was found for this Governor ID.
           </p>
         )}
         {result && result !== "none" && (
@@ -263,13 +259,14 @@ function StatusChecker() {
 const PUBLIC_LABELS = { Pending: "Pending", Approved: "Accepted", Rejected: "Rejected" };
 
 function ApplicantList() {
-  const [apps, setApps] = useState(loadApplications);
+  const [apps, setApps] = useState([]);
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
 
   // Auto-update: reload the list when data changes, when the tab is focused, and every 5 seconds.
   useEffect(() => {
-    const refresh = () => setApps(loadApplications());
+    const refresh = () => loadPublicApplicants().then(setApps);
+    refresh();
     window.addEventListener("storage", refresh);
     window.addEventListener("focus", refresh);
     const t = setInterval(refresh, 5000);
@@ -651,6 +648,7 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
   });
   const [errors, setErrors] = useState({});
   const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const set = (key, value) => {
     setForm((f) => ({ ...f, [key]: value }));
@@ -856,8 +854,8 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
 
           {submitError && <p className="error banner">{submitError}</p>}
 
-          <button type="submit" className="btn btn-primary btn-xl btn-block" disabled={!allDone}>
-            Apply
+          <button type="submit" className="btn btn-primary btn-xl btn-block" disabled={!allDone || submitting}>
+            {submitting ? "Submitting..." : "Apply"}
           </button>
           {!allDone && (
             <p className="hint center">The Apply button unlocks when all required items are completed.</p>
@@ -903,58 +901,7 @@ function Confirmation({ app, go }) {
 /* ==========================================================================
    ADMIN LOGIN (separate from the player flow)
    ========================================================================== */
-function AdminLogin({ onSuccess }) {
-  const [password, setPassword] = useState("");
-  const [show, setShow] = useState(false);
-  const [error, setError] = useState("");
 
-  function handleSubmit(e) {
-    e.preventDefault();
-    if (password === ADMIN_PASSWORD) {
-      sessionStorage.setItem(SESSION_KEY, "1");
-      onSuccess();
-    } else {
-      setError("Incorrect password. Please try again.");
-    }
-  }
-
-  return (
-    <main className="container narrow small">
-      <div className="card form-card">
-        <span className="badge">Owner access</span>
-        <h2>Admin Sign In</h2>
-        <p className="muted">This area is for the Kingdom {KINGDOM} owner only.</p>
-        <form onSubmit={handleSubmit}>
-          <div className={`field ${error ? "has-error" : ""}`}>
-            <label className="label" htmlFor="pw">
-              Admin Password
-            </label>
-            <div className="pw-row">
-              <input
-                id="pw"
-                type={show ? "text" : "password"}
-                value={password}
-                autoFocus
-                onChange={(e) => {
-                  setPassword(e.target.value);
-                  setError("");
-                }}
-                placeholder="Enter password"
-              />
-              <button type="button" className="btn btn-outline" onClick={() => setShow((s) => !s)}>
-                {show ? "Hide" : "Show"}
-              </button>
-            </div>
-            {error && <p className="error">{error}</p>}
-          </div>
-          <button type="submit" className="btn btn-primary btn-block" disabled={!password}>
-            Sign In
-          </button>
-        </form>
-      </div>
-    </main>
-  );
-}
 
 /* ==========================================================================
    ADMIN DASHBOARD
@@ -1048,7 +995,7 @@ function ApplicationCard({ app, onStatus, onDelete, onZoom, onCopy }) {
 }
 
 function AdminDashboard({ isOpen, onToggleOpen }) {
-  const [apps, setApps] = useState(loadApplications);
+  const [apps, setApps] = useState([]);
   const [filter, setFilter] = useState("All");
   const [sort, setSort] = useState("newest");
   const [search, setSearch] = useState("");
@@ -1056,13 +1003,19 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
   const [toast, setToast] = useState(null);
   const timer = useRef(null);
 
-  // Keep the list in sync if another tab adds an application.
+  async function reload() {
+    try {
+      setApps(await loadApplications());
+    } catch {
+      showToast("Could not load applications. Try signing in again.");
+    }
+  }
+
+  // Load now, then refresh every 10 seconds so new applications appear automatically.
   useEffect(() => {
-    const onStorage = (e) => {
-      if (e.key === STORAGE_KEY) setApps(loadApplications());
-    };
-    window.addEventListener("storage", onStorage);
-    return () => window.removeEventListener("storage", onStorage);
+    reload();
+    const t = setInterval(reload, 10000);
+    return () => clearInterval(t);
   }, []);
 
   // Lightbox keyboard controls.
@@ -1149,7 +1102,7 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
           <p className="muted">MGE applications &middot; Kingdom {KINGDOM}</p>
         </div>
         <div className="head-actions">
-          <button className="btn btn-outline" onClick={() => setApps(loadApplications())}>
+          <button className="btn btn-outline" onClick={reload}>
             Refresh
           </button>
           <button
@@ -1276,64 +1229,6 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
 /* ==========================================================================
    APP ROOT
    ========================================================================== */
-export default function App() {
-  const [view, setView] = useState("home"); // home | apply | success | login | admin
-  const [isAdmin, setIsAdmin] = useState(() => sessionStorage.getItem(SESSION_KEY) === "1");
-  const [isOpen, setIsOpen] = useState(() => loadSettings().open);
-  const [lastApp, setLastApp] = useState(null);
-
-  useEffect(() => {
-    window.scrollTo(0, 0);
-  }, [view]);
-
-  // Protect the admin view.
-  const go = (next) => setView(next === "admin" && !isAdmin ? "login" : next);
-
-  function signOut() {
-    sessionStorage.removeItem(SESSION_KEY);
-    setIsAdmin(false);
-    setView("home");
-  }
-
-  function toggleOpen() {
-    const next = !isOpen;
-    setIsOpen(next);
-    saveSettings({ open: next });
-  }
-
-  const loginScreen = (
-    <AdminLogin
-      onSuccess={() => {
-        setIsAdmin(true);
-        setView("admin");
-      }}
-    />
-  );
-
-  return (
-    <div className="app">
-      <Header view={view} isAdmin={isAdmin} go={go} onSignOut={signOut} />
-
-      {view === "home" && <Home go={go} isOpen={isOpen} />}
-      {view === "apply" && (
-        <ApplyForm
-          isOpen={isOpen}
-          go={go}
-          onSubmitted={(app) => {
-            setLastApp(app);
-            setView("success");
-          }}
-        />
-      )}
-      {view === "success" && <Confirmation app={lastApp} go={go} />}
-      {view === "login" && loginScreen}
-      {view === "admin" &&
-        (isAdmin ? <AdminDashboard isOpen={isOpen} onToggleOpen={toggleOpen} /> : loginScreen)}
-
-      <Footer />
-    </div>
-  );
-}
 
 /* ==========================================================================
    NOTE: This is a front-end prototype. Applications live in the browser's
