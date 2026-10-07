@@ -9,7 +9,7 @@ const SITE_NAME = "XTiT";
 
 const BUCKET = "screenshots";
 
-const MAX_IMAGE_SIDE = 1400; // screenshots are downscaled to keep storage small
+const MAX_IMAGE_SIDE = 1000; // screenshots are downscaled to keep storage small
 const ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const STATUSES = ["Pending", "Approved", "Rejected"];
 
@@ -41,7 +41,7 @@ const IMAGE_FIELDS = [
    STORAGE HELPERS (browser localStorage - swap with a real API later)
    ========================================================================== */
 // Images the owner can view in the dashboard (the speed-ups screenshot is optional)
-const MAX_TECH_IMAGES = 6; // max screenshots for Military Technology Research
+const MAX_TECH_IMAGES = 4;// max screenshots for Military Technology Research
 
 // Works for old applications (single image) and new ones (list of images)
 const toList = (v) => (Array.isArray(v) ? v : v ? [v] : []);
@@ -64,29 +64,100 @@ function viewFields(app) {
   return items;
 }
 
-function loadApplications() {
-  try {
-    return JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
-  } catch {
-    return [];
-  }
+const fromRow = (r) => ({
+  id: r.id,
+  playerName: r.player_name,
+  governorId: r.governor_id,
+  charlesMartel: r.charles_martel,
+  infantryEquipment: r.infantry_equipment,
+  militaryTech: r.military_tech || [],
+  t5Plan: r.t5_plan || "",
+  speedups: r.speedups || "",
+  shareAccount: r.share_account || "",
+  createdAt: r.created_at,
+  status: r.status,
+});
+
+// Admin only (blocked by the database for everyone else)
+async function loadApplications() {
+  const { data, error } = await supabase
+    .from("applications")
+    .select("*")
+    .order("created_at", { ascending: false });
+  if (error) throw error;
+  return data.map(fromRow);
 }
 
-function saveApplications(list) {
-  // Throws if the browser storage quota is exceeded.
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(list));
+// Public: name + status only
+async function loadPublicApplicants() {
+  const { data, error } = await supabase.rpc("public_applicants");
+  if (error) return [];
+  return data.map((r) => ({
+    id: r.id,
+    playerName: r.player_name,
+    status: r.status,
+    createdAt: r.created_at,
+  }));
 }
 
-function loadSettings() {
-  try {
-    return { open: true, ...JSON.parse(localStorage.getItem(SETTINGS_KEY)) };
-  } catch {
-    return { open: true };
-  }
+async function checkStatus(governorId) {
+  const { data } = await supabase.rpc("check_status", { gid: governorId });
+  return data && data[0] ? { playerName: data[0].player_name, status: data[0].status } : null;
 }
 
-function saveSettings(settings) {
-  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+async function uploadImage(dataUrl) {
+  if (!dataUrl) return "";
+  const blob = await (await fetch(dataUrl)).blob();
+  const path = `${crypto.randomUUID()}.jpg`;
+  const { error } = await supabase.storage.from(BUCKET).upload(path, blob, { contentType: "image/jpeg" });
+  if (error) throw error;
+  return supabase.storage.from(BUCKET).getPublicUrl(path).data.publicUrl;
+}
+
+async function createApplication(f) {
+  const id = crypto.randomUUID();
+  const [charles, infantry, speed] = await Promise.all([
+    uploadImage(f.charlesMartel),
+    uploadImage(f.infantryEquipment),
+    uploadImage(f.speedups),
+  ]);
+  const tech = await Promise.all(toList(f.militaryTech).map(uploadImage));
+  const { error } = await supabase.from("applications").insert({
+    id,
+    player_name: f.playerName,
+    governor_id: f.governorId,
+    charles_martel: charles,
+    infantry_equipment: infantry,
+    military_tech: tech,
+    t5_plan: f.t5Plan,
+    speedups: speed,
+    share_account: f.shareAccount,
+  });
+  if (error) throw error;
+  return { id, playerName: f.playerName, governorId: f.governorId };
+}
+
+async function updateStatus(id, status) {
+  const { error } = await supabase.from("applications").update({ status }).eq("id", id);
+  if (error) throw error;
+}
+
+async function deleteApplication(app) {
+  const urls = [app.charlesMartel, app.infantryEquipment, ...toList(app.militaryTech), app.speedups].filter(Boolean);
+  const paths = urls.map((u) => u.split(`/${BUCKET}/`)[1]).filter(Boolean);
+  const { error } = await supabase.from("applications").delete().eq("id", app.id);
+  if (error) throw error;
+  if (paths.length) await supabase.storage.from(BUCKET).remove(paths);
+}
+
+async function getOpen() {
+  const { data } = await supabase.from("settings").select("open").eq("id", 1).single();
+  return data ? data.open : true;
+}
+
+async function saveOpen(open) {
+  const { error } = await supabase.from("settings").update({ open }).eq("id", 1);
+  if (error) throw error;
 }
 
 /* ==========================================================================
@@ -108,7 +179,7 @@ function compressImage(file) {
         ctx.fillStyle = "#fff";
         ctx.fillRect(0, 0, canvas.width, canvas.height);
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL("image/jpeg", 0.8));
+        resolve(canvas.toDataURL("image/jpeg", 0.7));
       };
       img.src = reader.result;
     };
@@ -389,6 +460,9 @@ function Home({ go, isOpen }) {
           </div>
         ))}
       </section>
+
+      <StatusChecker />
+      <ApplicantList />
     </main>
   );
 }
@@ -677,17 +751,11 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
     return e;
   }
 
-  function handleSubmit(ev) {
+  async function handleSubmit(ev) {
     ev.preventDefault();
     setSubmitError("");
 
     const e = validate();
-    const existing = loadApplications();
-    const dup = existing.find((a) => a.governorId === form.governorId.trim());
-    if (dup && !e.governorId) {
-      e.governorId = `This Governor ID already applied (status: ${dup.status}). Each player can apply once.`;
-    }
-
     setErrors(e);
     if (Object.keys(e).length) {
       setTimeout(() => {
@@ -696,27 +764,29 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
       return;
     }
 
-    const application = {
-      id: crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random(),
-      playerName: form.playerName.trim(),
-      governorId: form.governorId.trim(),
-      charlesMartel: form.charlesMartel,
-      infantryEquipment: form.infantryEquipment,
-      militaryTech: form.militaryTech,
-      t5Plan: form.t5Plan,
-      speedups: form.t5Plan === "Yes" ? form.speedups : "",
-      shareAccount: form.shareAccount,
-      createdAt: new Date().toISOString(),
-      status: "Pending",
-    };
-
+    setSubmitting(true);
     try {
-      saveApplications([application, ...existing]);
+      const gid = form.governorId.trim();
+      const dup = await checkStatus(gid);
+      if (dup) {
+        setErrors({ governorId: `This Governor ID already applied (status: ${dup.status}). Each player can apply once.` });
+        return;
+      }
+      const application = await createApplication({
+        ...form,
+        playerName: form.playerName.trim(),
+        governorId: gid,
+        speedups: form.t5Plan === "Yes" ? form.speedups : "",
+      });
       onSubmitted(application);
-    } catch {
-      setSubmitError(
-        "Could not save your application (browser storage is full). Try smaller screenshots."
-      );
+    } catch (err) {
+      if (err?.code === "23505") {
+        setErrors({ governorId: "This Governor ID already applied. Each player can apply once." });
+      } else {
+        setSubmitError("Could not submit your application. Check your connection and try again.");
+      }
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -901,6 +971,67 @@ function Confirmation({ app, go }) {
 /* ==========================================================================
    ADMIN LOGIN (separate from the player flow)
    ========================================================================== */
+function AdminLogin({ onSuccess }) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    setBusy(true);
+    const { error: err } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    setBusy(false);
+    if (err) setError("Incorrect email or password.");
+    else onSuccess();
+  }
+
+  return (
+    <main className="container narrow small">
+      <div className="card form-card">
+        <span className="badge">Owner access</span>
+        <h2>Admin Sign In</h2>
+        <p className="muted">This area is for the Kingdom {KINGDOM} owner only.</p>
+        <form onSubmit={handleSubmit}>
+          <div className={`field ${error ? "has-error" : ""}`}>
+            <label className="label" htmlFor="em">Admin Email</label>
+            <input
+              id="em"
+              type="text"
+              inputMode="email"
+              autoComplete="username"
+              value={email}
+              autoFocus
+              onChange={(e) => { setEmail(e.target.value); setError(""); }}
+              placeholder="Enter email"
+            />
+          </div>
+          <div className={`field ${error ? "has-error" : ""}`}>
+            <label className="label" htmlFor="pw">Admin Password</label>
+            <div className="pw-row">
+              <input
+                id="pw"
+                type={show ? "text" : "password"}
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => { setPassword(e.target.value); setError(""); }}
+                placeholder="Enter password"
+              />
+              <button type="button" className="btn btn-outline" onClick={() => setShow((s) => !s)}>
+                {show ? "Hide" : "Show"}
+              </button>
+            </div>
+            {error && <p className="error">{error}</p>}
+          </div>
+          <button type="submit" className="btn btn-primary btn-block" disabled={!email || !password || busy}>
+            {busy ? "Signing in..." : "Sign In"}
+          </button>
+        </form>
+      </div>
+    </main>
+  );
+}
 
 
 /* ==========================================================================
@@ -982,7 +1113,7 @@ function ApplicationCard({ app, onStatus, onDelete, onZoom, onCopy }) {
         {viewFields(app).map((f, i) => (
           <figure key={f.key} className="thumb">
             <button type="button" onClick={() => onZoom(app, i)}>
-              <img src={f.src} alt={f.label} />
+              <img src={f.src} alt={f.label} loading="lazy" />
               <span className="thumb-num">{i + 1}</span>
               <span className="thumb-zoom">Click to enlarge</span>
             </button>
@@ -1000,6 +1131,7 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
   const [sort, setSort] = useState("newest");
   const [search, setSearch] = useState("");
   const [zoom, setZoom] = useState(null); // { app, index }
+  const [limit, setLimit] = useState(20);
   const [toast, setToast] = useState(null);
   const timer = useRef(null);
 
@@ -1043,30 +1175,29 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
     timer.current = setTimeout(() => setToast(null), 5000);
   }
 
-  function update(fn) {
-    setApps((cur) => {
-      const next = fn(cur);
-      try {
-        saveApplications(next);
-      } catch {
-        /* storage full - ignore on admin side */
-      }
-      return next;
-    });
-  }
-
-  function setStatus(app, status) {
+  async function setStatus(app, status) {
     const previous = app.status;
-    update((cur) => cur.map((a) => (a.id === app.id ? { ...a, status } : a)));
-    showToast(`${app.playerName} marked as ${status}.`, () => {
-      update((cur) => cur.map((a) => (a.id === app.id ? { ...a, status: previous } : a)));
-      setToast(null);
-    });
+    try {
+      await updateStatus(app.id, status);
+      setApps((cur) => cur.map((a) => (a.id === app.id ? { ...a, status } : a)));
+      showToast(`${app.playerName} marked as ${status}.`, async () => {
+        await updateStatus(app.id, previous);
+        setApps((cur) => cur.map((a) => (a.id === app.id ? { ...a, status: previous } : a)));
+        setToast(null);
+      });
+    } catch {
+      showToast("Could not update. Please sign in again.");
+    }
   }
 
-  function remove(app) {
-    update((cur) => cur.filter((a) => a.id !== app.id));
-    showToast(`${app.playerName}'s application was deleted.`);
+  async function remove(app) {
+    try {
+      await deleteApplication(app);
+      setApps((cur) => cur.filter((a) => a.id !== app.id));
+      showToast(`${app.playerName}'s application was deleted.`);
+    } catch {
+      showToast("Could not delete. Please sign in again.");
+    }
   }
 
   function copy(text) {
@@ -1185,6 +1316,11 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
               onCopy={copy}
             />
           ))}
+          {visible.length > limit && (
+            <button className="btn btn-outline" onClick={() => setLimit((l) => l + 20)}>
+              Show more ({visible.length - limit} left)
+            </button>
+          )}
         </div>
       )}
 
@@ -1229,6 +1365,75 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
 /* ==========================================================================
    APP ROOT
    ========================================================================== */
+export default function App() {
+  const [view, setView] = useState("home"); // home | apply | success | login | admin
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [isOpen, setIsOpen] = useState(true);
+  const [lastApp, setLastApp] = useState(null);
+
+  useEffect(() => {
+    window.scrollTo(0, 0);
+  }, [view]);
+
+  // Admin session (handled securely by Supabase Auth)
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setIsAdmin(!!data.session));
+    const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => setIsAdmin(!!session));
+    return () => sub.subscription.unsubscribe();
+  }, []);
+
+  // Open/closed switch is shared by every device
+  useEffect(() => {
+    const load = () => getOpen().then(setIsOpen);
+    load();
+    const t = setInterval(load, 15000);
+    return () => clearInterval(t);
+  }, []);
+
+  const go = (next) => setView(next === "admin" && !isAdmin ? "login" : next);
+
+  async function signOut() {
+    await supabase.auth.signOut();
+    setIsAdmin(false);
+    setView("home");
+  }
+
+  async function toggleOpen() {
+    const next = !isOpen;
+    try {
+      await saveOpen(next);
+      setIsOpen(next);
+    } catch {
+      alert("Could not change the setting. Please sign in again.");
+    }
+  }
+
+  const loginScreen = <AdminLogin onSuccess={() => setView("admin")} />;
+
+  return (
+    <div className="app">
+      <Header view={view} isAdmin={isAdmin} go={go} onSignOut={signOut} />
+
+      {view === "home" && <Home go={go} isOpen={isOpen} />}
+      {view === "apply" && (
+        <ApplyForm
+          isOpen={isOpen}
+          go={go}
+          onSubmitted={(app) => {
+            setLastApp(app);
+            setView("success");
+          }}
+        />
+      )}
+      {view === "success" && <Confirmation app={lastApp} go={go} />}
+      {view === "login" && loginScreen}
+      {view === "admin" &&
+        (isAdmin ? <AdminDashboard isOpen={isOpen} onToggleOpen={toggleOpen} /> : loginScreen)}
+
+      <Footer />
+    </div>
+  );
+}
 
 /* ==========================================================================
    NOTE: This is a front-end prototype. Applications live in the browser's
