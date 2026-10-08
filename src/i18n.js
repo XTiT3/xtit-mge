@@ -1071,7 +1071,93 @@ const ru = {
 };
 
 /* ===== All translations. Missing languages / missing keys fall back to English. ===== */
-const T = { en, sv, ar, de, fr, es, pt, tr, ru };
+/* ===== Gear Inventory + Materials text (overrides the older gear texts) ===== */
+const GEAR = {
+  en: {
+    "g.h": "Please send screenshots of all the gear you currently have in your inventory. Include unfinished equipment, finished equipment that is still waiting to be crafted, and the materials you currently have for crafting equipment.",
+    "g.note": "Please make sure the first screenshot clearly shows your important gear inventory. Extra screenshots are optional: use them to show more gear, unfinished or ready-to-craft equipment, and your materials.",
+    "g.mat": "Materials: you can use your optional extra screenshots to show the materials you currently have. See the example below. It is only an example - there is no separate upload for materials.",
+    "g.mat.t": "Materials Inventory",
+    "ht.gear.d": "Upload screenshots showing your gear inventory: unfinished equipment, finished equipment waiting to be crafted, and the materials you currently have for equipment.",
+    "ht.gear.n": "The first gear inventory screenshot is required and must clearly show your important gear. Images 2-{max} are optional - add them to show more gear, unfinished or ready-to-craft equipment and your materials, up to {max} images in total.",
+    "ht.mat.n": "The image below is only an example of a materials screenshot. It is not a separate required upload - add your own materials screenshot as one of your optional gear images.",
+  },
+  sv: {
+    "g.h": "Skicka skärmdumpar på all utrustning du har i ditt inventarie. Ta med ofullbordad utrustning, färdig utrustning som väntar på att tillverkas och de material du har för att tillverka utrustning.",
+    "g.note": "Se till att den första skärmdumpen tydligt visar ditt viktiga utrustningsinventarie. Extra skärmdumpar är valfria: använd dem för att visa mer utrustning, ofullbordad eller tillverkningsklar utrustning och dina material.",
+    "g.mat": "Material: du kan använda dina valfria extra skärmdumpar för att visa de material du har. Se exemplet nedan. Det är bara ett exempel - det finns ingen separat uppladdning för material.",
+    "g.mat.t": "Materialinventarie",
+    "ht.gear.d": "Ladda upp skärmdumpar som visar ditt utrustningsinventarie: ofullbordad utrustning, färdig utrustning som väntar på tillverkning och de material du har för utrustning.",
+    "ht.gear.n": "Den första skärmdumpen av utrustningsinventariet är obligatorisk och måste tydligt visa din viktiga utrustning. Bild 2-{max} är valfria - lägg till dem för att visa mer utrustning, ofullbordad eller tillverkningsklar utrustning och dina material, totalt upp till {max} bilder.",
+    "ht.mat.n": "Bilden nedan är bara ett exempel på en skärmdump av material. Det är ingen separat obligatorisk uppladdning - lägg till din egen materialskärmdump som en av dina valfria utrustningsbilder.",
+  },
+  ar: {
+    "g.h": "يرجى إرسال لقطات شاشة لجميع المعدات الموجودة حاليًا في مخزونك. أضف المعدات غير المكتملة، والمعدات المكتملة التي تنتظر الصنع، والمواد التي لديك حاليًا لصنع المعدات.",
+    "g.note": "تأكد من أن أول لقطة شاشة تُظهر مخزون المعدات المهم بوضوح. اللقطات الإضافية اختيارية: استخدمها لإظهار المزيد من المعدات، أو المعدات غير المكتملة أو الجاهزة للصنع، ومواردك.",
+    "g.mat": "المواد: يمكنك استخدام اللقطات الإضافية الاختيارية لإظهار المواد التي لديك حاليًا. انظر المثال أدناه. هذا مجرد مثال - لا يوجد رفع منفصل للمواد.",
+    "g.mat.t": "مخزون المواد",
+    "ht.gear.d": "ارفع لقطات شاشة تُظهر مخزون المعدات: المعدات غير المكتملة، والمعدات المكتملة التي تنتظر الصنع، والمواد التي لديك حاليًا للمعدات.",
+    "ht.gear.n": "أول لقطة شاشة لمخزون المعدات مطلوبة ويجب أن تُظهر معداتك المهمة بوضوح. الصور 2-{max} اختيارية - أضفها لإظهار المزيد من المعدات، أو المعدات غير المكتملة أو الجاهزة للصنع، ومواردك، بحد أقصى {max} صورة.",
+    "ht.mat.n": "الصورة أدناه مجرد مثال للقطة شاشة المواد. وهي ليست رفعًا منفصلًا مطلوبًا - أضف لقطة المواد الخاصة بك كإحدى صور المعدات الاختيارية.",
+  },
+  de: {
+    "g.h": "Bitte sende Screenshots deiner gesamten Ausrüstung im Inventar. Füge unfertige Ausrüstung, fertige Ausrüstung, die noch hergestellt werden muss, und die Materialien hinzu, die du aktuell für die Herstellung von Ausrüstung hast.",
+    "g.note": "Achte darauf, dass der erste Screenshot dein wichtiges Ausrüstungsinventar deutlich zeigt. Weitere Screenshots sind optional: Nutze sie, um mehr Ausrüstung, unfertige oder herstellbare Ausrüstung und deine Materialien zu zeigen.",
+    "g.mat": "Materialien: Du kannst deine optionalen zusätzlichen Screenshots nutzen, um deine aktuellen Materialien zu zeigen. Siehe das Beispiel unten. Es ist nur ein Beispiel - es gibt keinen separaten Upload für Materialien.",
+    "g.mat.t": "Materialinventar",
+    "ht.gear.d": "Lade Screenshots hoch, die dein Ausrüstungsinventar zeigen: unfertige Ausrüstung, fertige Ausrüstung, die noch hergestellt werden muss, und die Materialien, die du aktuell für Ausrüstung hast.",
+    "ht.gear.n": "Der erste Screenshot des Ausrüstungsinventars ist Pflicht und muss deine wichtige Ausrüstung deutlich zeigen. Bild 2-{max} sind optional - füge sie hinzu, um mehr Ausrüstung, unfertige oder herstellbare Ausrüstung und deine Materialien zu zeigen, insgesamt bis zu {max} Bilder.",
+    "ht.mat.n": "Das Bild unten ist nur ein Beispiel für einen Material-Screenshot. Es ist kein separater Pflicht-Upload - füge deinen eigenen Material-Screenshot als eines deiner optionalen Ausrüstungsbilder hinzu.",
+  },
+  fr: {
+    "g.h": "Envoyez des captures de tout l'équipement présent dans votre inventaire. Incluez l'équipement inachevé, l'équipement terminé en attente de fabrication et les matériaux que vous possédez actuellement pour fabriquer de l'équipement.",
+    "g.note": "Assurez-vous que la première capture montre clairement votre inventaire d'équipement important. Les captures supplémentaires sont facultatives : utilisez-les pour montrer plus d'équipement, l'équipement inachevé ou prêt à fabriquer, et vos matériaux.",
+    "g.mat": "Matériaux : vous pouvez utiliser vos captures supplémentaires facultatives pour montrer les matériaux que vous possédez. Voir l'exemple ci-dessous. Ce n'est qu'un exemple - il n'y a pas d'envoi séparé pour les matériaux.",
+    "g.mat.t": "Inventaire des matériaux",
+    "ht.gear.d": "Envoyez des captures montrant votre inventaire d'équipement : équipement inachevé, équipement terminé en attente de fabrication et matériaux que vous possédez pour l'équipement.",
+    "ht.gear.n": "La première capture de l'inventaire d'équipement est obligatoire et doit montrer clairement votre équipement important. Les images 2-{max} sont facultatives - ajoutez-les pour montrer plus d'équipement, l'équipement inachevé ou prêt à fabriquer et vos matériaux, jusqu'à {max} images au total.",
+    "ht.mat.n": "L'image ci-dessous n'est qu'un exemple de capture de matériaux. Ce n'est pas un envoi obligatoire séparé - ajoutez votre propre capture de matériaux comme l'une de vos images d'équipement facultatives.",
+  },
+  es: {
+    "g.h": "Envía capturas de todo el equipo que tienes en tu inventario. Incluye equipo sin terminar, equipo terminado que aún espera ser fabricado y los materiales que tienes actualmente para fabricar equipo.",
+    "g.note": "Asegúrate de que la primera captura muestre claramente tu inventario de equipo importante. Las capturas adicionales son opcionales: úsalas para mostrar más equipo, equipo sin terminar o listo para fabricar y tus materiales.",
+    "g.mat": "Materiales: puedes usar tus capturas adicionales opcionales para mostrar los materiales que tienes. Mira el ejemplo de abajo. Es solo un ejemplo - no hay una subida separada para materiales.",
+    "g.mat.t": "Inventario de materiales",
+    "ht.gear.d": "Sube capturas que muestren tu inventario de equipo: equipo sin terminar, equipo terminado que espera ser fabricado y los materiales que tienes para equipo.",
+    "ht.gear.n": "La primera captura del inventario de equipo es obligatoria y debe mostrar claramente tu equipo importante. Las imágenes 2-{max} son opcionales: añádelas para mostrar más equipo, equipo sin terminar o listo para fabricar y tus materiales, hasta {max} imágenes en total.",
+    "ht.mat.n": "La imagen de abajo es solo un ejemplo de captura de materiales. No es una subida obligatoria aparte - añade tu propia captura de materiales como una de tus imágenes de equipo opcionales.",
+  },
+  pt: {
+    "g.h": "Envie capturas de todo o equipamento que tem no inventário. Inclua equipamento inacabado, equipamento acabado que ainda aguarda fabrico e os materiais que tem atualmente para fabricar equipamento.",
+    "g.note": "Certifique-se de que a primeira captura mostra claramente o seu inventário de equipamento importante. As capturas extra são opcionais: use-as para mostrar mais equipamento, equipamento inacabado ou pronto a fabricar e os seus materiais.",
+    "g.mat": "Materiais: pode usar as suas capturas extra opcionais para mostrar os materiais que tem atualmente. Veja o exemplo abaixo. É apenas um exemplo - não há envio separado para materiais.",
+    "g.mat.t": "Inventário de materiais",
+    "ht.gear.d": "Envie capturas que mostrem o seu inventário de equipamento: equipamento inacabado, equipamento acabado que aguarda fabrico e os materiais que tem para equipamento.",
+    "ht.gear.n": "A primeira captura do inventário de equipamento é obrigatória e deve mostrar claramente o seu equipamento importante. As imagens 2-{max} são opcionais - adicione-as para mostrar mais equipamento, equipamento inacabado ou pronto a fabricar e os seus materiais, até {max} imagens no total.",
+    "ht.mat.n": "A imagem abaixo é apenas um exemplo de captura de materiais. Não é um envio obrigatório separado - adicione a sua própria captura de materiais como uma das suas imagens de equipamento opcionais.",
+  },
+  tr: {
+    "g.h": "Lütfen envanterinizdeki tüm ekipmanların ekran görüntülerini gönderin. Tamamlanmamış ekipmanları, üretilmeyi bekleyen bitmiş ekipmanları ve ekipman üretmek için şu anda sahip olduğunuz malzemeleri de ekleyin.",
+    "g.note": "Lütfen ilk ekran görüntüsünün önemli ekipman envanterinizi net gösterdiğinden emin olun. Ek görüntüler isteğe bağlıdır: daha fazla ekipmanı, tamamlanmamış veya üretime hazır ekipmanları ve malzemelerinizi göstermek için kullanın.",
+    "g.mat": "Malzemeler: şu anda sahip olduğunuz malzemeleri göstermek için isteğe bağlı ek ekran görüntülerinizi kullanabilirsiniz. Aşağıdaki örneğe bakın. Bu yalnızca bir örnektir - malzemeler için ayrı bir yükleme yoktur.",
+    "g.mat.t": "Malzeme Envanteri",
+    "ht.gear.d": "Ekipman envanterinizi gösteren ekran görüntüleri yükleyin: tamamlanmamış ekipmanlar, üretilmeyi bekleyen bitmiş ekipmanlar ve ekipman için sahip olduğunuz malzemeler.",
+    "ht.gear.n": "İlk ekipman envanteri ekran görüntüsü zorunludur ve önemli ekipmanlarınızı net göstermelidir. Görsel 2-{max} isteğe bağlıdır - daha fazla ekipmanı, tamamlanmamış veya üretime hazır ekipmanları ve malzemelerinizi göstermek için ekleyin, toplam {max} görsele kadar.",
+    "ht.mat.n": "Aşağıdaki görsel yalnızca bir malzeme ekran görüntüsü örneğidir. Ayrı zorunlu bir yükleme değildir - kendi malzeme ekran görüntünüzü isteğe bağlı ekipman görsellerinizden biri olarak ekleyin.",
+  },
+  ru: {
+    "g.h": "Отправьте скриншоты всей экипировки, которая есть в вашем инвентаре. Включите незавершённую экипировку, готовую экипировку, ожидающую создания, и материалы, которые у вас сейчас есть для создания экипировки.",
+    "g.note": "Убедитесь, что первый скриншот чётко показывает ваш важный инвентарь экипировки. Дополнительные скриншоты необязательны: используйте их, чтобы показать больше экипировки, незавершённую или готовую к созданию экипировку и ваши материалы.",
+    "g.mat": "Материалы: вы можете использовать необязательные дополнительные скриншоты, чтобы показать имеющиеся у вас материалы. Смотрите пример ниже. Это только пример - отдельной загрузки для материалов нет.",
+    "g.mat.t": "Инвентарь материалов",
+    "ht.gear.d": "Загрузите скриншоты вашего инвентаря экипировки: незавершённая экипировка, готовая экипировка, ожидающая создания, и материалы, которые у вас есть для экипировки.",
+    "ht.gear.n": "Первый скриншот инвентаря экипировки обязателен и должен чётко показывать вашу важную экипировку. Изображения 2-{max} необязательны - добавьте их, чтобы показать больше экипировки, незавершённую или готовую к созданию экипировку и материалы, всего до {max} изображений.",
+    "ht.mat.n": "Изображение ниже - лишь пример скриншота материалов. Это не отдельная обязательная загрузка - добавьте свой скриншот материалов как одно из необязательных изображений экипировки.",
+  },
+};
+
+const BASE = { en, sv, ar, de, fr, es, pt, tr, ru };
+const T = Object.fromEntries(Object.entries(BASE).map(([k, v]) => [k, { ...v, ...GEAR[k] }]));
 // To add a language: create a const (copy `en`, translate the values) and add it to T above,
 // e.g.  const it = {...};   then   const T = { en, ..., it };
 

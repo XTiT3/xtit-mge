@@ -666,6 +666,8 @@ function GearImagesField({ index, value, error, onChange, max = MAX_GEAR_IMAGES 
       </label>
       <p className="help">{t("g.h")}</p>
       <p className="gear-note">{t("g.note")}</p>
+      <p className="gear-note">{t("g.mat")}</p>
+      <ExampleImage src="materials-inventory.jpg" title={t("g.mat.t")} />
 
       <div className="gear-legend">
         <span className="gear-tag required">{t("g.req")}</span>
@@ -767,7 +769,7 @@ const HOW_TO_STEPS = [
   { title: "f.charlesMartel.l", text: "ht.cm.d", image: "charles-martel.jpg" },
   { title: "f.infantryEquipment.l", text: "ht.inf.d", image: "infantry-equipment.jpg" },
   { title: "f.militaryTech.l", text: "ht.tech.d", image: "military-tech.jpg" },
-  { title: "g.l", text: "ht.gear.d", note: "ht.gear.n", image: "gear-inventory.jpg" },
+  { title: "g.l", text: "ht.gear.d", note: "ht.gear.n", image: "gear-inventory.jpg", image2: "materials-inventory.jpg", title2: "g.mat.t", note2: "ht.mat.n" },
 ];
 
 function ExampleImage({ src, title }) {
@@ -811,6 +813,8 @@ function HowToApply() {
                 <p>{t(s.text)}</p>
                 {s.note && <p className="ht-note">{t(s.note, { max: MAX_GEAR_IMAGES })}</p>}
                 <ExampleImage src={s.image} title={t(s.title)} />
+                {s.note2 && <p className="ht-note">{t(s.note2)}</p>}
+                <ExampleImage src={s.image2} title={t(s.title2 || s.title)} />
               </li>
             ))}
           </ol>
