@@ -1,5 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabase.js";
+import { LANGUAGES, RTL_LANGS, LangContext, useT, makeT, loadLang, saveLang } from "./src/i18n.js";
 
 /* ==========================================================================
    CONFIG - change these values easily
@@ -8,10 +9,22 @@ const KINGDOM = "4161";
 const SITE_NAME = "XTiT";
 
 const BUCKET = "screenshots";
+const ADMIN_EMAIL = "adnanxtit33@gmail.com"; // the email of the admin user you created in Supabase
 
 const MAX_IMAGE_SIDE = 1000; // screenshots are downscaled to keep storage small
 const ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const STATUSES = ["Pending", "Approved", "Rejected"];
+const MAX_REWARD_RANK = 9999; // must match the SQL check
+// [value, label] - a number means "Top 1 up to that number". Edit these to change the buttons.
+const REWARD_FILTERS = [
+  ["all", "All players"],
+  ["has", "Has reward"],
+  ["3", "Top 1-3"],
+  ["10", "Top 1-10"],
+  ["15", "Top 1-15"],
+  ["50", "Top 1-50"],
+  ["none", "No reward"],
+];
 
 const STATUS_MESSAGES = {
   Pending: "Your application is waiting to be reviewed.",
@@ -42,6 +55,7 @@ const IMAGE_FIELDS = [
    ========================================================================== */
 // Images the owner can view in the dashboard (the speed-ups screenshot is optional)
 const MAX_TECH_IMAGES = 4;// max screenshots for Military Technology Research
+const MAX_GEAR_IMAGES = 15; // max screenshots for Gear Inventory (the first one is required)
 
 // Works for old applications (single image) and new ones (list of images)
 const toList = (v) => (Array.isArray(v) ? v : v ? [v] : []);
@@ -60,6 +74,7 @@ function viewFields(app) {
     );
   };
   IMAGE_FIELDS.forEach((f) => add(f.key, f.label, app[f.key]));
+  add("gearInventory", "Gear Inventory", app.gearInventory);
   add("speedups", "T5 Speed-ups", app.speedups);
   return items;
 }
@@ -71,9 +86,11 @@ const fromRow = (r) => ({
   charlesMartel: r.charles_martel,
   infantryEquipment: r.infantry_equipment,
   militaryTech: r.military_tech || [],
+  gearInventory: r.gear_inventory || [],
   t5Plan: r.t5_plan || "",
   speedups: r.speedups || "",
   shareAccount: r.share_account || "",
+  rewardRank: r.reward_rank ?? null,
   createdAt: r.created_at,
   status: r.status,
 });
@@ -122,6 +139,7 @@ async function createApplication(f) {
     uploadImage(f.speedups),
   ]);
   const tech = await Promise.all(toList(f.militaryTech).map(uploadImage));
+  const gear = await Promise.all(toList(f.gearInventory).map(uploadImage));
   const { error } = await supabase.from("applications").insert({
     id,
     player_name: f.playerName,
@@ -129,6 +147,7 @@ async function createApplication(f) {
     charles_martel: charles,
     infantry_equipment: infantry,
     military_tech: tech,
+    gear_inventory: gear,
     t5_plan: f.t5Plan,
     speedups: speed,
     share_account: f.shareAccount,
@@ -142,8 +161,13 @@ async function updateStatus(id, status) {
   if (error) throw error;
 }
 
+async function updateReward(id, rewardRank) {
+  const { error } = await supabase.from("applications").update({ reward_rank: rewardRank }).eq("id", id);
+  if (error) throw error;
+}
+
 async function deleteApplication(app) {
-  const urls = [app.charlesMartel, app.infantryEquipment, ...toList(app.militaryTech), app.speedups].filter(Boolean);
+  const urls = [app.charlesMartel, app.infantryEquipment, ...toList(app.militaryTech), ...toList(app.gearInventory), app.speedups].filter(Boolean);
   const paths = urls.map((u) => u.split(`/${BUCKET}/`)[1]).filter(Boolean);
   const { error } = await supabase.from("applications").delete().eq("id", app.id);
   if (error) throw error;
@@ -204,8 +228,8 @@ function refCode(app) {
 function downloadCsv(apps) {
   const esc = (v) => `"${String(v).replace(/"/g, '""')}"`;
   const rows = [
-    ["Player Name", "Governor ID", "Status", "Submitted", "Reference"],
-    ...apps.map((a) => [a.playerName, a.governorId, a.status, formatDate(a.createdAt), refCode(a)]),
+    ["Player Name", "Governor ID", "Status", "Reward", "Submitted", "Reference"],
+    ...apps.map((a) => [a.playerName, a.governorId, a.status, a.rewardRank != null ? `Top ${a.rewardRank}` : "", formatDate(a.createdAt), refCode(a)]),
   ];
   const csv = rows.map((r) => r.map(esc).join(",")).join("\n");
   const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8" });
@@ -230,33 +254,40 @@ function Logo({ onClick }) {
   );
 }
 
+function LanguageSelect() {
+  const { lang, setLang, t } = useT();
+  return (
+    <label className="lang-wrap" title={t("lang")}>
+      <span aria-hidden="true">🌐</span>
+      <select className="lang-select" value={lang} onChange={(e) => setLang(e.target.value)} aria-label={t("lang")}>
+        {LANGUAGES.map((l) => (
+          <option key={l.code} value={l.code}>{l.name}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 function Header({ view, isAdmin, go, onSignOut }) {
+  const { t } = useT();
   return (
     <header className="header">
       <div className="container header-inner">
         <Logo onClick={() => go("home")} />
         <nav className="nav">
+          <LanguageSelect />
           {view !== "home" && !isAdmin && (
-            <button className="btn btn-ghost" onClick={() => go("home")}>
-              Home
-            </button>
+            <button className="btn btn-ghost" onClick={() => go("home")}>{t("nav.home")}</button>
           )}
           {isAdmin ? (
             <>
-              <button
-                className={`btn btn-ghost ${view === "admin" ? "active" : ""}`}
-                onClick={() => go("admin")}
-              >
-                Dashboard
+              <button className={`btn btn-ghost ${view === "admin" ? "active" : ""}`} onClick={() => go("admin")}>
+                {t("nav.dash")}
               </button>
-              <button className="btn btn-outline" onClick={onSignOut}>
-                Sign Out
-              </button>
+              <button className="btn btn-outline" onClick={onSignOut}>{t("nav.out")}</button>
             </>
           ) : (
-            <button className="btn btn-outline" onClick={() => go("login")}>
-              Sign In
-            </button>
+            <button className="btn btn-outline" onClick={() => go("login")}>{t("nav.in")}</button>
           )}
         </nav>
       </div>
@@ -265,11 +296,10 @@ function Header({ view, isAdmin, go, onSignOut }) {
 }
 
 function Footer() {
+  const { t } = useT();
   return (
     <footer className="footer">
-      <div className="container">
-        {SITE_NAME} &middot; Rise of Kingdoms &middot; Kingdom {KINGDOM} only
-      </div>
+      <div className="container">{t("foot", { site: SITE_NAME, kd: KINGDOM })}</div>
     </footer>
   );
 }
@@ -278,6 +308,7 @@ function Footer() {
    HOME
    ========================================================================== */
 function StatusChecker() {
+  const { t } = useT();
   const [id, setId] = useState("");
   const [result, setResult] = useState(null); // null | "none" | application
 
@@ -290,13 +321,13 @@ function StatusChecker() {
   return (
     <section className="container narrow small-wide">
       <div className="card checker">
-        <h3>Already applied? Check your status</h3>
-        <p className="muted">Enter your Governor ID to see if your application was reviewed.</p>
+        <h3>{t("c.t")}</h3>
+        <p className="muted">{t("c.d")}</p>
         <form className="checker-row" onSubmit={check}>
           <input
             type="text"
             inputMode="numeric"
-            placeholder="Your Governor ID"
+            placeholder={t("c.ph")}
             value={id}
             maxLength={12}
             onChange={(e) => {
@@ -304,22 +335,16 @@ function StatusChecker() {
               setResult(null);
             }}
           />
-          <button className="btn btn-outline" type="submit" disabled={!id.trim()}>
-            Check
-          </button>
+          <button className="btn btn-outline" type="submit" disabled={!id.trim()}>{t("c.b")}</button>
         </form>
 
-        {result === "none" && (
-          <p className="notice notice-warn">
-            No application was found for this Governor ID.
-          </p>
-        )}
+        {result === "none" && <p className="notice notice-warn">{t("c.no")}</p>}
         {result && result !== "none" && (
           <div className={`notice notice-${result.status.toLowerCase()}`}>
             <strong>
-              {result.playerName} &middot; {result.status}
+              {result.playerName} &middot; {t("s." + result.status)}
             </strong>
-            <span>{STATUS_MESSAGES[result.status]}</span>
+            <span>{t("m." + result.status)}</span>
           </div>
         )}
       </div>
@@ -327,33 +352,31 @@ function StatusChecker() {
   );
 }
 
-const PUBLIC_LABELS = { Pending: "Pending", Approved: "Accepted", Rejected: "Rejected" };
+const pubKey = (s) => (s === "Approved" ? "s.pub" : "s." + s);
 
 function ApplicantList() {
+  const { t } = useT();
   const [apps, setApps] = useState([]);
   const [filter, setFilter] = useState("All");
   const [search, setSearch] = useState("");
 
-  // Auto-update: reload the list when data changes, when the tab is focused, and every 5 seconds.
   useEffect(() => {
     const refresh = () => loadPublicApplicants().then(setApps);
     refresh();
     window.addEventListener("storage", refresh);
     window.addEventListener("focus", refresh);
-    const t = setInterval(refresh, 5000);
+    const timer = setInterval(refresh, 30000);
     return () => {
       window.removeEventListener("storage", refresh);
       window.removeEventListener("focus", refresh);
-      clearInterval(t);
+      clearInterval(timer);
     };
   }, []);
 
   const q = search.trim().toLowerCase();
   const sorted = [...apps].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   const visible = sorted.filter(
-    (a) =>
-      (filter === "All" || a.status === filter) &&
-      (!q || a.playerName.toLowerCase().includes(q))
+    (a) => (filter === "All" || a.status === filter) && (!q || a.playerName.toLowerCase().includes(q))
   );
   const count = (s) => apps.filter((a) => a.status === s).length;
 
@@ -362,33 +385,22 @@ function ApplicantList() {
       <div className="card applicant-list">
         <div className="al-head">
           <div>
-            <h3>Applicant List</h3>
-            <p className="muted">
-              Everyone who applied for MGE in Kingdom {KINGDOM}. Updates automatically.
-            </p>
+            <h3>{t("al.t")}</h3>
+            <p className="muted">{t("al.d", { kd: KINGDOM })}</p>
           </div>
-          <span className="al-total">{apps.length} total</span>
+          <span className="al-total">{t("al.n", { n: apps.length })}</span>
         </div>
 
-        <input
-          type="search"
-          placeholder="Search by player name"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
+        <input type="search" placeholder={t("al.s")} value={search} onChange={(e) => setSearch(e.target.value)} />
 
         <div className="chips al-chips">
           {[
-            ["All", "All"],
-            ["Approved", "Accepted"],
-            ["Pending", "Pending"],
-            ["Rejected", "Rejected"],
+            ["All", t("al.all")],
+            ["Approved", t("s.pub")],
+            ["Pending", t("s.Pending")],
+            ["Rejected", t("s.Rejected")],
           ].map(([value, label]) => (
-            <button
-              key={value}
-              className={`chip ${filter === value ? "active" : ""}`}
-              onClick={() => setFilter(value)}
-            >
+            <button key={value} className={`chip ${filter === value ? "active" : ""}`} onClick={() => setFilter(value)}>
               {label}
               <span className="chip-count">{value === "All" ? apps.length : count(value)}</span>
             </button>
@@ -396,18 +408,14 @@ function ApplicantList() {
         </div>
 
         {visible.length === 0 ? (
-          <p className="muted al-empty">
-            {apps.length === 0 ? "No one has applied yet." : "No players match your search or filter."}
-          </p>
+          <p className="muted al-empty">{apps.length === 0 ? t("al.e0") : t("al.e1")}</p>
         ) : (
           <ol className="al-rows">
             {visible.map((a, i) => (
               <li className="al-row" key={a.id}>
                 <span className="al-index">{i + 1}</span>
                 <span className="al-name">{a.playerName}</span>
-                <span className={`status status-${a.status.toLowerCase()}`}>
-                  {PUBLIC_LABELS[a.status]}
-                </span>
+                <span className={`status status-${a.status.toLowerCase()}`}>{t(pubKey(a.status))}</span>
               </li>
             ))}
           </ol>
@@ -418,59 +426,41 @@ function ApplicantList() {
 }
 
 function Home({ go, isOpen }) {
+  const { t } = useT();
   return (
     <main>
       <section className="hero">
         <div className="container hero-inner">
-          <span className="badge">Rise of Kingdoms &middot; Kingdom {KINGDOM}</span>
+          <span className="badge">{t("h.badge", { kd: KINGDOM })}</span>
           <h1>
-            Apply for <span className="accent">The Mightiest Governor</span>
+            {t("h.t1")} <span className="accent">{t("h.t2")}</span>
           </h1>
-          <p className="hero-text">
-            Welcome to <strong>{SITE_NAME}</strong>, the official application site for
-            The Mightiest Governor (MGE) event in Kingdom <strong>{KINGDOM}</strong>.
-            Submit your Governor details and screenshots, and our team will review your
-            application.
-          </p>
-          <button
-            className="btn btn-primary btn-xl"
-            disabled={!isOpen}
-            onClick={() => go("apply")}
-          >
-            {isOpen ? "Apply" : "Applications Closed"}
+          <p className="hero-text">{t("h.txt", { site: SITE_NAME, kd: KINGDOM })}</p>
+          <button className="btn btn-primary btn-xl" disabled={!isOpen} onClick={() => go("apply")}>
+            {isOpen ? t("h.go") : t("h.closed")}
           </button>
-          <p className="hint">
-            {isOpen
-              ? `Applications are open to Kingdom ${KINGDOM} players only.`
-              : "Applications are currently closed. Please check back later."}
-          </p>
+          <p className="hint">{isOpen ? t("h.hOpen", { kd: KINGDOM }) : t("h.hClosed")}</p>
         </div>
       </section>
 
       <section className="container steps">
-        {[
-          ["1", "Fill in your details", "Enter your player name and Governor ID."],
-          ["2", "Upload 3 screenshots", "Charles Martel skills, infantry equipment and military tech."],
-          ["3", "Wait for review", "The Kingdom owner reviews every application."],
-        ].map(([n, title, text]) => (
+        {["1", "2", "3"].map((n) => (
           <div className="card step" key={n}>
             <div className="step-num">{n}</div>
-            <h3>{title}</h3>
-            <p>{text}</p>
+            <h3>{t(`st${n}.t`)}</h3>
+            <p>{t(`st${n}.d`)}</p>
           </div>
         ))}
       </section>
-
-      <StatusChecker />
-      <ApplicantList />
     </main>
   );
 }
 
 /* ==========================================================================
-   IMAGE UPLOAD FIELD (click, drag & drop)
+   IMAGE UPLOAD FIELDS (all error values are translation keys)
    ========================================================================== */
 function ImageField({ index, field, value, error, onChange, optional }) {
+  const { t } = useT();
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [localError, setLocalError] = useState("");
@@ -479,58 +469,48 @@ function ImageField({ index, field, value, error, onChange, optional }) {
     if (!file) return;
     setLocalError("");
     if (!ACCEPTED_TYPES.includes(file.type)) {
-      setLocalError("Please upload a PNG, JPG or WEBP image.");
+      setLocalError("e.type");
       return;
     }
     setBusy(true);
     try {
       onChange(await compressImage(file));
-    } catch (err) {
-      setLocalError(err.message);
+    } catch {
+      setLocalError("e.img");
     } finally {
       setBusy(false);
     }
   }
 
   const shownError = localError || error;
+  const label = t(`f.${field.key}.l`);
 
   return (
     <div className={`field ${shownError ? "has-error" : ""}`}>
       <label className="label">
         <span className="label-num">{index}</span>
-        {field.label}{" "}
-        {optional ? <span className="opt">(optional)</span> : <span className="req">*</span>}
-        {value && <span className="done-tag">Uploaded</span>}
+        {label} {optional ? <span className="opt">{t("opt")}</span> : <span className="req">*</span>}
+        {value && <span className="done-tag">{t("up")}</span>}
       </label>
-      <p className="help">{field.help}</p>
+      <p className="help">{t(`f.${field.key}.h`)}</p>
 
       <label
         className={`dropzone ${value ? "filled" : ""} ${dragging ? "dragging" : ""}`}
-        onDragOver={(e) => {
-          e.preventDefault();
-          setDragging(true);
-        }}
+        onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
         onDragLeave={() => setDragging(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setDragging(false);
-          processFile(e.dataTransfer.files?.[0]);
-        }}
+        onDrop={(e) => { e.preventDefault(); setDragging(false); processFile(e.dataTransfer.files?.[0]); }}
       >
         <input
           type="file"
           accept=".png,.jpg,.jpeg,.webp"
-          onChange={(e) => {
-            processFile(e.target.files?.[0]);
-            e.target.value = "";
-          }}
+          onChange={(e) => { processFile(e.target.files?.[0]); e.target.value = ""; }}
         />
         {value ? (
-          <img src={value} alt={`${field.label} preview`} className="preview" />
+          <img src={value} alt={label} className="preview" />
         ) : (
           <span className="dz-text">
-            <strong>{busy ? "Processing image..." : "Tap or click to choose a screenshot"}</strong>
-            <small>or drag &amp; drop it here &middot; PNG / JPG</small>
+            <strong>{busy ? t("dz.b") : t("dz.1")}</strong>
+            <small>{t("dz.d")}</small>
           </span>
         )}
       </label>
@@ -538,31 +518,24 @@ function ImageField({ index, field, value, error, onChange, optional }) {
       {value && (
         <div className="img-actions">
           <label className="link-btn">
-            Replace
+            {t("rep")}
             <input
               type="file"
               accept=".png,.jpg,.jpeg,.webp"
               hidden
-              onChange={(e) => {
-                processFile(e.target.files?.[0]);
-                e.target.value = "";
-              }}
+              onChange={(e) => { processFile(e.target.files?.[0]); e.target.value = ""; }}
             />
           </label>
-          <button type="button" className="link-btn" onClick={() => onChange("")}>
-            Remove
-          </button>
+          <button type="button" className="link-btn" onClick={() => onChange("")}>{t("rem")}</button>
         </div>
       )}
-      {shownError && <p className="error">{shownError}</p>}
+      {shownError && <p className="error">{t(shownError)}</p>}
     </div>
   );
 }
 
-/* ==========================================================================
-   APPLICATION FORM
-   ========================================================================== */
 function MultiImageField({ index, field, value, error, onChange, max = MAX_TECH_IMAGES }) {
+  const { t } = useT();
   const [busy, setBusy] = useState(false);
   const [dragging, setDragging] = useState(false);
   const [localError, setLocalError] = useState("");
@@ -571,24 +544,22 @@ function MultiImageField({ index, field, value, error, onChange, max = MAX_TECH_
   async function addFiles(fileList) {
     const files = Array.from(fileList || []);
     if (files.length === 0) return;
-
     const room = max - images.length;
     if (room <= 0) {
-      setLocalError(`You can upload up to ${max} images.`);
+      setLocalError("e.full");
       return;
     }
-
     let message = "";
     const valid = files.filter((f) => ACCEPTED_TYPES.includes(f.type));
-    if (valid.length < files.length) message = "Some files were skipped (only PNG, JPG or WEBP).";
-    if (valid.length > room) message = `Only ${max} images are allowed - extra files were skipped.`;
+    if (valid.length < files.length) message = "e.skip";
+    if (valid.length > room) message = "e.max";
 
     setBusy(true);
     try {
       const added = await Promise.all(valid.slice(0, room).map(compressImage));
       onChange([...images, ...added]);
-    } catch (err) {
-      message = err.message;
+    } catch {
+      message = "e.img";
     } finally {
       setBusy(false);
     }
@@ -596,26 +567,27 @@ function MultiImageField({ index, field, value, error, onChange, max = MAX_TECH_
   }
 
   const shownError = localError || error;
+  const label = t(`f.${field.key}.l`);
 
   return (
     <div className={`field ${shownError ? "has-error" : ""}`}>
       <label className="label">
         <span className="label-num">{index}</span>
-        {field.label} <span className="req">*</span>
-        {images.length > 0 && <span className="done-tag">{images.length} uploaded</span>}
+        {label} <span className="req">*</span>
+        {images.length > 0 && <span className="done-tag">{t("n.up", { n: images.length })}</span>}
       </label>
-      <p className="help">{field.help}</p>
+      <p className="help">{t(`f.${field.key}.h`)}</p>
 
       {images.length > 0 && (
         <div className="multi-grid">
           {images.map((src, i) => (
             <div className="multi-item" key={i}>
-              <img src={src} alt={`${field.label} ${i + 1}`} />
+              <img src={src} alt={`${label} ${i + 1}`} />
               <span className="multi-num">{i + 1}</span>
               <button
                 type="button"
                 className="multi-remove"
-                aria-label={`Remove image ${i + 1}`}
+                aria-label={`${t("rem")} ${i + 1}`}
                 onClick={() => onChange(images.filter((_, j) => j !== i))}
               >
                 &times;
@@ -628,59 +600,139 @@ function MultiImageField({ index, field, value, error, onChange, max = MAX_TECH_
       {images.length < max && (
         <label
           className={`dropzone dropzone-small ${dragging ? "dragging" : ""}`}
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
           onDragLeave={() => setDragging(false)}
-          onDrop={(e) => {
-            e.preventDefault();
-            setDragging(false);
-            addFiles(e.dataTransfer.files);
-          }}
+          onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}
         >
           <input
             type="file"
             multiple
             accept=".png,.jpg,.jpeg,.webp"
-            onChange={(e) => {
-              addFiles(e.target.files);
-              e.target.value = "";
-            }}
+            onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }}
           />
           <span className="dz-text">
-            <strong>
-              {busy
-                ? "Processing images..."
-                : images.length > 0
-                ? "+ Add more screenshots"
-                : "Tap or click to choose screenshots"}
-            </strong>
-            <small>
-              You can select several at once &middot; up to {max} images &middot; PNG / JPG
-            </small>
+            <strong>{busy ? t("dz.bn") : images.length > 0 ? t("dz.more") : t("dz.m")}</strong>
+            <small>{t("dz.h", { max })}</small>
           </span>
         </label>
       )}
 
+      {images.length > 0 && <p className="hint multi-count">{t("n.of", { n: images.length, max })}</p>}
+      {shownError && <p className="error">{t(shownError, { max })}</p>}
+    </div>
+  );
+}
+
+function GearImagesField({ index, value, error, onChange, max = MAX_GEAR_IMAGES }) {
+  const { t } = useT();
+  const [busy, setBusy] = useState(false);
+  const [dragging, setDragging] = useState(false);
+  const [localError, setLocalError] = useState("");
+  const images = toList(value);
+
+  async function addFiles(fileList) {
+    const files = Array.from(fileList || []);
+    if (files.length === 0) return;
+    const room = max - images.length;
+    if (room <= 0) {
+      setLocalError("e.full");
+      return;
+    }
+    let message = "";
+    const valid = files.filter((f) => ACCEPTED_TYPES.includes(f.type));
+    if (valid.length < files.length) message = "e.skip";
+    if (valid.length > room) message = "e.max";
+
+    setBusy(true);
+    try {
+      const added = await Promise.all(valid.slice(0, room).map(compressImage));
+      onChange([...images, ...added]);
+    } catch {
+      message = "e.img";
+    } finally {
+      setBusy(false);
+    }
+    setLocalError(message);
+  }
+
+  const shownError = localError || error;
+
+  return (
+    <div className={`field ${shownError ? "has-error" : ""}`}>
+      <label className="label">
+        <span className="label-num">{index}</span>
+        {t("g.l")} <span className="req">*</span>
+        {images.length > 0 && <span className="done-tag">{t("n.s", { n: images.length, max })}</span>}
+      </label>
+      <p className="help">{t("g.h")}</p>
+      <p className="gear-note">{t("g.note")}</p>
+
+      <div className="gear-legend">
+        <span className="gear-tag required">{t("g.req")}</span>
+        <span className="gear-tag optional">{t("g.opt", { max })}</span>
+      </div>
+
       {images.length > 0 && (
-        <p className="hint multi-count">
-          {images.length} of {max} images
-        </p>
+        <div className="multi-grid">
+          {images.map((src, i) => (
+            <div className="gear-cell" key={i}>
+              <div className="multi-item">
+                <img src={src} alt={`${t("g.l")} ${i + 1}`} />
+                <span className="multi-num">{i + 1}</span>
+                <button
+                  type="button"
+                  className="multi-remove"
+                  aria-label={`${t("rem")} ${i + 1}`}
+                  onClick={() => onChange(images.filter((_, j) => j !== i))}
+                >
+                  &times;
+                </button>
+              </div>
+              <span className={`gear-tag ${i === 0 ? "required" : "optional"}`}>
+                {t(i === 0 ? "g.reqN" : "g.optN", { n: i + 1 })}
+              </span>
+            </div>
+          ))}
+        </div>
       )}
-      {shownError && <p className="error">{shownError}</p>}
+
+      {images.length < max && (
+        <label
+          className={`dropzone dropzone-small ${dragging ? "dragging" : ""}`}
+          onDragOver={(e) => { e.preventDefault(); setDragging(true); }}
+          onDragLeave={() => setDragging(false)}
+          onDrop={(e) => { e.preventDefault(); setDragging(false); addFiles(e.dataTransfer.files); }}
+        >
+          <input
+            type="file"
+            multiple
+            accept=".png,.jpg,.jpeg,.webp"
+            onChange={(e) => { addFiles(e.target.files); e.target.value = ""; }}
+          />
+          <span className="dz-text">
+            <strong>
+              {busy ? t("dz.bn") : images.length === 0 ? t("g.add1") : t("g.addN", { n: images.length + 1 })}
+            </strong>
+            <small>{t("dz.h", { max })}</small>
+          </span>
+        </label>
+      )}
+
+      {images.length > 0 && <p className="hint multi-count">{t("n.of", { n: images.length, max })}</p>}
+      {shownError && <p className="error">{t(shownError, { max })}</p>}
     </div>
   );
 }
 
 function YesNoField({ index, label, help, value, error, required, onChange }) {
+  const { t } = useT();
+  const word = (v) => t(v === "Yes" ? "yes" : "no");
   return (
     <div className={`field ${error ? "has-error" : ""}`}>
       <label className="label">
         <span className="label-num">{index}</span>
-        {label}{" "}
-        {required ? <span className="req">*</span> : <span className="opt">(optional)</span>}
-        {value && <span className="done-tag">{value}</span>}
+        {label} {required ? <span className="req">*</span> : <span className="opt">{t("opt")}</span>}
+        {value && <span className="done-tag">{word(value)}</span>}
       </label>
       {help && <p className="help">{help}</p>}
 
@@ -694,33 +746,98 @@ function YesNoField({ index, label, help, value, error, required, onChange }) {
             className={`choice choice-${opt.toLowerCase()} ${value === opt ? "selected" : ""}`}
             onClick={() => onChange(opt)}
           >
-            {opt}
+            {word(opt)}
           </button>
         ))}
       </div>
 
       {!required && value && (
-        <button type="button" className="link-btn" onClick={() => onChange("")}>
-          Clear answer
-        </button>
+        <button type="button" className="link-btn" onClick={() => onChange("")}>{t("clr")}</button>
       )}
-      {error && <p className="error">{error}</p>}
+      {error && <p className="error">{t(error)}</p>}
     </div>
   );
 }
 
+/* ---------- How to Apply ---------- */
+const EXAMPLE_BASE = `${import.meta.env.BASE_URL}examples/`;
+const HOW_TO_STEPS = [
+  { title: "name.l", text: "ht.name.d", image: null },
+  { title: "gid.l", text: "ht.gid.d", image: null },
+  { title: "f.charlesMartel.l", text: "ht.cm.d", image: "charles-martel.jpg" },
+  { title: "f.infantryEquipment.l", text: "ht.inf.d", image: "infantry-equipment.jpg" },
+  { title: "f.militaryTech.l", text: "ht.tech.d", image: "military-tech.jpg" },
+  { title: "g.l", text: "ht.gear.d", note: "ht.gear.n", image: "gear-inventory.jpg" },
+];
+
+function ExampleImage({ src, title }) {
+  const { t } = useT();
+  const [failed, setFailed] = useState(false);
+  if (!src || failed) return null;
+  return (
+    <figure className="ht-example">
+      <figcaption className="ht-example-title">{t("hw.ex", { title })}</figcaption>
+      <img src={EXAMPLE_BASE + src} alt={t("hw.ex", { title })} loading="lazy" onError={() => setFailed(true)} />
+    </figure>
+  );
+}
+
+function HowToApply() {
+  const { t } = useT();
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="howto-wrap">
+      <button
+        type="button"
+        className="btn btn-primary btn-block howto-toggle"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        {open ? t("hw.hide") : t("hw.show")}
+      </button>
+      {open && (
+        <section className="howto" aria-labelledby="howto-title">
+          <h3 id="howto-title">{t("hw.show")}</h3>
+          <p className="muted">{t("hw.intro")}</p>
+          <p className="howto-warn">{t("hw.warn")}</p>
+
+          <ol className="ht-steps">
+            {HOW_TO_STEPS.map((s, i) => (
+              <li className="ht-step" key={s.title}>
+                <div className="ht-head">
+                  <span className="ht-num">{t("hw.step", { n: i + 1 })}</span>
+                  <h4>{t(s.title)}</h4>
+                </div>
+                <p>{t(s.text)}</p>
+                {s.note && <p className="ht-note">{t(s.note, { max: MAX_GEAR_IMAGES })}</p>}
+                <ExampleImage src={s.image} title={t(s.title)} />
+              </li>
+            ))}
+          </ol>
+        </section>
+      )}
+    </div>
+  );
+}
+
+/* ==========================================================================
+   APPLICATION FORM
+   ========================================================================== */
 function ApplyForm({ onSubmitted, isOpen, go }) {
+  const { t } = useT();
   const [form, setForm] = useState({
     playerName: "",
     governorId: "",
     charlesMartel: "",
     infantryEquipment: "",
     militaryTech: [],
+    gearInventory: [],
     t5Plan: "",
     speedups: "",
     shareAccount: "",
   });
   const [errors, setErrors] = useState({});
+  const [dupStatus, setDupStatus] = useState("Pending");
   const [submitError, setSubmitError] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -733,6 +850,7 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
     form.playerName.trim().length > 0,
     /^\d{5,12}$/.test(form.governorId.trim()),
     ...IMAGE_FIELDS.map((f) => toList(form[f.key]).length > 0),
+    toList(form.gearInventory).length > 0,
     form.shareAccount !== "",
   ];
   const doneCount = checks.filter(Boolean).length;
@@ -740,14 +858,14 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
 
   function validate() {
     const e = {};
-    if (!form.playerName.trim()) e.playerName = "Please enter your player name.";
-    if (!form.governorId.trim()) e.governorId = "Please enter your Governor ID.";
-    else if (!/^\d{5,12}$/.test(form.governorId.trim()))
-      e.governorId = "Governor ID must be 5-12 digits (numbers only).";
+    if (!form.playerName.trim()) e.playerName = "e.name";
+    if (!form.governorId.trim()) e.governorId = "e.gid";
+    else if (!/^\d{5,12}$/.test(form.governorId.trim())) e.governorId = "e.gid2";
     IMAGE_FIELDS.forEach((f) => {
-      if (toList(form[f.key]).length === 0) e[f.key] = "Please upload at least one screenshot.";
+      if (toList(form[f.key]).length === 0) e[f.key] = "e.shot";
     });
-    if (!form.shareAccount) e.shareAccount = "Please choose Yes or No.";
+    if (toList(form.gearInventory).length === 0) e.gearInventory = "e.gear";
+    if (!form.shareAccount) e.shareAccount = "e.yn";
     return e;
   }
 
@@ -769,7 +887,8 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
       const gid = form.governorId.trim();
       const dup = await checkStatus(gid);
       if (dup) {
-        setErrors({ governorId: `This Governor ID already applied (status: ${dup.status}). Each player can apply once.` });
+        setDupStatus(dup.status);
+        setErrors({ governorId: "e.dup" });
         return;
       }
       const application = await createApplication({
@@ -780,11 +899,8 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
       });
       onSubmitted(application);
     } catch (err) {
-      if (err?.code === "23505") {
-        setErrors({ governorId: "This Governor ID already applied. Each player can apply once." });
-      } else {
-        setSubmitError("Could not submit your application. Check your connection and try again.");
-      }
+      if (err?.code === "23505") setErrors({ governorId: "e.dup2" });
+      else setSubmitError("e.sub");
     } finally {
       setSubmitting(false);
     }
@@ -794,13 +910,9 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
     return (
       <main className="container narrow">
         <div className="card center confirm">
-          <h2>Applications are closed</h2>
-          <p className="muted">
-            MGE applications for Kingdom {KINGDOM} are not open right now. Please check back later.
-          </p>
-          <button className="btn btn-primary" onClick={() => go("home")}>
-            Back to Home
-          </button>
+          <h2>{t("cl.t")}</h2>
+          <p className="muted">{t("cl.d", { kd: KINGDOM })}</p>
+          <button className="btn btn-primary" onClick={() => go("home")}>{t("back")}</button>
         </div>
       </main>
     );
@@ -809,17 +921,13 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
   return (
     <main className="container narrow">
       <div className="card form-card">
-        <span className="badge">Kingdom {KINGDOM} only</span>
-        <h2>MGE Application</h2>
-        <p className="muted">
-          Fields marked <span className="req">*</span> are required. Questions marked (optional) can be skipped.
-        </p>
+        <span className="badge">{t("fm.badge", { kd: KINGDOM })}</span>
+        <h2>{t("fm.t")}</h2>
+        <p className="muted">{t("fm.fields")}</p>
 
         <div className="progress">
           <div className="progress-top">
-            <span>
-              {allDone ? "Everything is ready - press Apply!" : `${doneCount} of ${checks.length} completed`}
-            </span>
+            <span>{allDone ? t("fm.ready") : t("fm.prog", { n: doneCount, total: checks.length })}</span>
             <strong>{Math.round((doneCount / checks.length) * 100)}%</strong>
           </div>
           <div className="bar">
@@ -828,33 +936,33 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
         </div>
 
         <form onSubmit={handleSubmit} noValidate>
+          <HowToApply />
+
           <div className={`field ${errors.playerName ? "has-error" : ""}`}>
             <label className="label" htmlFor="playerName">
               <span className="label-num">1</span>
-              Player Name <span className="req">*</span>
-              {checks[0] && <span className="done-tag">Done</span>}
+              {t("name.l")} <span className="req">*</span>
+              {checks[0] && <span className="done-tag">{t("done")}</span>}
             </label>
-            <p className="help">Your in-game governor name exactly as it appears in Rise of Kingdoms.</p>
+            <p className="help">{t("name.h")}</p>
             <input
               id="playerName"
               type="text"
               value={form.playerName}
               maxLength={40}
               onChange={(e) => set("playerName", e.target.value)}
-              placeholder="e.g. XTiT Warrior"
+              placeholder={t("name.ph")}
             />
-            {errors.playerName && <p className="error">{errors.playerName}</p>}
+            {errors.playerName && <p className="error">{t(errors.playerName)}</p>}
           </div>
 
           <div className={`field ${errors.governorId ? "has-error" : ""}`}>
             <label className="label" htmlFor="governorId">
               <span className="label-num">2</span>
-              Governor ID <span className="req">*</span>
-              {checks[1] && <span className="done-tag">Done</span>}
+              {t("gid.l")} <span className="req">*</span>
+              {checks[1] && <span className="done-tag">{t("done")}</span>}
             </label>
-            <p className="help">
-              Tap your avatar in the game to find it. Numbers only (5-12 digits).
-            </p>
+            <p className="help">{t("gid.h")}</p>
             <input
               id="governorId"
               type="text"
@@ -862,9 +970,9 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
               value={form.governorId}
               maxLength={12}
               onChange={(e) => set("governorId", e.target.value.replace(/\D/g, ""))}
-              placeholder="e.g. 123456789"
+              placeholder={t("gid.ph")}
             />
-            {errors.governorId && <p className="error">{errors.governorId}</p>}
+            {errors.governorId && <p className="error">{t(errors.governorId, { status: t("s." + dupStatus) })}</p>}
           </div>
 
           {IMAGE_FIELDS.map((f, i) =>
@@ -889,10 +997,17 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
             )
           )}
 
-          <YesNoField
+          <GearImagesField
             index={6}
-            label="Are you planning to unlock T5 troops before KvK1?"
-            help="Optional. If yes, please send a screenshot of your speed-ups."
+            value={form.gearInventory}
+            error={errors.gearInventory}
+            onChange={(v) => set("gearInventory", v)}
+          />
+
+          <YesNoField
+            index={7}
+            label={t("q7.l")}
+            help={t("q7.h")}
             required={false}
             value={form.t5Plan}
             onChange={(v) => set("t5Plan", v)}
@@ -900,12 +1015,9 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
 
           {form.t5Plan === "Yes" && (
             <ImageField
-              index="6a"
+              index="7a"
               optional
-              field={{
-                label: "Speed-ups Screenshot",
-                help: "Screenshot of your speed-ups.",
-              }}
+              field={{ key: "speedups" }}
               value={form.speedups}
               error={errors.speedups}
               onChange={(v) => set("speedups", v)}
@@ -913,23 +1025,21 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
           )}
 
           <YesNoField
-            index={7}
-            label="Can you share your account with the kingdom leadership so that the account can remain online 24/7?"
-            help="Required. You must choose Yes or No."
+            index={8}
+            label={t("q8.l")}
+            help={t("q8.h")}
             required
             value={form.shareAccount}
             error={errors.shareAccount}
             onChange={(v) => set("shareAccount", v)}
           />
 
-          {submitError && <p className="error banner">{submitError}</p>}
+          {submitError && <p className="error banner">{t(submitError)}</p>}
 
           <button type="submit" className="btn btn-primary btn-xl btn-block" disabled={!allDone || submitting}>
-            {submitting ? "Submitting..." : "Apply"}
+            {submitting ? t("fm.going") : t("fm.go")}
           </button>
-          {!allDone && (
-            <p className="hint center">The Apply button unlocks when all required items are completed.</p>
-          )}
+          {!allDone && <p className="hint center">{t("fm.lock")}</p>}
         </form>
       </div>
     </main>
@@ -940,39 +1050,35 @@ function ApplyForm({ onSubmitted, isOpen, go }) {
    CONFIRMATION
    ========================================================================== */
 function Confirmation({ app, go }) {
+  const { t } = useT();
   return (
     <main className="container narrow">
       <div className="card center confirm">
         <div className="check">&#10003;</div>
-        <h2>Your application was submitted successfully.</h2>
-        <p className="muted">
-          Thank you! Your MGE application for Kingdom {KINGDOM} was saved and will be reviewed
-          by the Kingdom owner.
-        </p>
+        <h2>{t("ok.t")}</h2>
+        <p className="muted">{t("ok.d", { kd: KINGDOM })}</p>
 
         {app && (
           <dl className="summary">
-            <div><dt>Player</dt><dd>{app.playerName}</dd></div>
-            <div><dt>Governor ID</dt><dd>{app.governorId}</dd></div>
-            <div><dt>Reference</dt><dd>{refCode(app)}</dd></div>
-            <div><dt>Status</dt><dd>Pending</dd></div>
+            <div><dt>{t("ok.p")}</dt><dd>{app.playerName}</dd></div>
+            <div><dt>{t("gid.l")}</dt><dd>{app.governorId}</dd></div>
+            <div><dt>{t("ok.r")}</dt><dd>{refCode(app)}</dd></div>
+            <div><dt>{t("ok.s")}</dt><dd>{t("s.Pending")}</dd></div>
           </dl>
         )}
 
-        <p className="hint">The Kingdom owner will review your application soon.</p>
-        <button className="btn btn-primary" onClick={() => go("home")}>
-          Back to Home
-        </button>
+        <p className="hint">{t("ok.h")}</p>
+        <button className="btn btn-primary" onClick={() => go("home")}>{t("back")}</button>
       </div>
     </main>
   );
 }
 
 /* ==========================================================================
-   ADMIN LOGIN (separate from the player flow)
+   ADMIN LOGIN
    ========================================================================== */
 function AdminLogin({ onSuccess }) {
-  const [email, setEmail] = useState("");
+  const { t } = useT();
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [error, setError] = useState("");
@@ -981,51 +1087,39 @@ function AdminLogin({ onSuccess }) {
   async function handleSubmit(e) {
     e.preventDefault();
     setBusy(true);
-    const { error: err } = await supabase.auth.signInWithPassword({ email: email.trim(), password });
+    const { error: err } = await supabase.auth.signInWithPassword({ email: ADMIN_EMAIL, password });
     setBusy(false);
-    if (err) setError("Incorrect email or password.");
+    if (err) setError(t("lg.fail", { msg: err.message }));
     else onSuccess();
   }
 
   return (
     <main className="container narrow small">
       <div className="card form-card">
-        <span className="badge">Owner access</span>
-        <h2>Admin Sign In</h2>
-        <p className="muted">This area is for the Kingdom {KINGDOM} owner only.</p>
+        <span className="badge">{t("lg.badge")}</span>
+        <h2>{t("lg.t")}</h2>
+        <p className="muted">{t("lg.d", { kd: KINGDOM })}</p>
         <form onSubmit={handleSubmit}>
           <div className={`field ${error ? "has-error" : ""}`}>
-            <label className="label" htmlFor="em">Admin Email</label>
-            <input
-              id="em"
-              type="text"
-              inputMode="email"
-              autoComplete="username"
-              value={email}
-              autoFocus
-              onChange={(e) => { setEmail(e.target.value); setError(""); }}
-              placeholder="Enter email"
-            />
-          </div>
-          <div className={`field ${error ? "has-error" : ""}`}>
-            <label className="label" htmlFor="pw">Admin Password</label>
+            <label className="label" htmlFor="pw">{t("lg.pw")}</label>
             <div className="pw-row">
               <input
                 id="pw"
                 type={show ? "text" : "password"}
                 autoComplete="current-password"
+                autoFocus
                 value={password}
                 onChange={(e) => { setPassword(e.target.value); setError(""); }}
-                placeholder="Enter password"
+                placeholder={t("lg.ph")}
               />
               <button type="button" className="btn btn-outline" onClick={() => setShow((s) => !s)}>
-                {show ? "Hide" : "Show"}
+                {show ? t("lg.hide") : t("lg.show")}
               </button>
             </div>
             {error && <p className="error">{error}</p>}
           </div>
-          <button type="submit" className="btn btn-primary btn-block" disabled={!email || !password || busy}>
-            {busy ? "Signing in..." : "Sign In"}
+          <button type="submit" className="btn btn-primary btn-block" disabled={!password || busy}>
+            {busy ? t("lg.busy") : t("nav.in")}
           </button>
         </form>
       </div>
@@ -1033,12 +1127,62 @@ function AdminLogin({ onSuccess }) {
   );
 }
 
-
 /* ==========================================================================
    ADMIN DASHBOARD
    ========================================================================== */
-function ApplicationCard({ app, onStatus, onDelete, onZoom, onCopy }) {
+// Translates the thumbnail captions made by viewFields()
+function viewLabel(t, f) {
+  const base = f.key.replace(/-\d+$/, "");
+  const k = base === "gearInventory" ? "g.l" : base === "speedups" ? "ad.spd" : `f.${base}.l`;
+  const m = f.label.match(/\(\d+\/\d+\)$/);
+  return t(k) + (m ? " " + m[0] : "");
+}
+
+function RewardInput({ app, onReward }) {
+  const { t } = useT();
+  const [value, setValue] = useState(app.rewardRank ?? "");
+
+  useEffect(() => {
+    setValue(app.rewardRank ?? "");
+  }, [app.rewardRank]);
+
+  const changed = String(value) !== String(app.rewardRank ?? "");
+  const invalid = value !== "" && (Number(value) < 1 || Number(value) > MAX_REWARD_RANK);
+
+  function save(e) {
+    e.preventDefault();
+    if (invalid || !changed) return;
+    onReward(app, value === "" ? null : Number(value));
+  }
+
+  return (
+    <form className="reward" onSubmit={save}>
+      <label className="reward-label" htmlFor={`rank-${app.id}`}>{t("rw.label")}</label>
+      <div className="reward-input-row">
+        <span className="reward-prefix">{t("rw.pre")}</span>
+        <input
+          id={`rank-${app.id}`}
+          type="text"
+          inputMode="numeric"
+          maxLength={4}
+          placeholder={t("rw.ph")}
+          value={value}
+          onChange={(e) => setValue(e.target.value.replace(/\D/g, ""))}
+        />
+        <button className="btn btn-primary" type="submit" disabled={!changed || invalid}>{t("ad.save")}</button>
+      </div>
+      {invalid && <p className="error">{t("rw.err", { max: MAX_REWARD_RANK })}</p>}
+      {app.rewardRank != null && (
+        <button type="button" className="link-btn" onClick={() => onReward(app, null)}>{t("rw.clr")}</button>
+      )}
+    </form>
+  );
+}
+
+function ApplicationCard({ app, onStatus, onReward, onDelete, onZoom, onCopy }) {
+  const { t } = useT();
   const statusKey = app.status.toLowerCase();
+  const yn = (v) => (v ? t(v === "Yes" ? "yes" : "no") : t("ad.na"));
 
   return (
     <article className={`card app-card border-${statusKey}`}>
@@ -1047,65 +1191,46 @@ function ApplicationCard({ app, onStatus, onDelete, onZoom, onCopy }) {
           <div className="avatar">{app.playerName.charAt(0).toUpperCase()}</div>
           <div className="app-name">
             <h3>{app.playerName}</h3>
-            <span className={`status status-${statusKey}`}>{app.status}</span>
+            <span className={`status status-${statusKey}`}>{t("s." + app.status)}</span>
+            {app.rewardRank != null && <span className="reward-badge">{t("rw.badge", { n: app.rewardRank })}</span>}
           </div>
         </div>
 
         <dl className="meta">
           <div>
-            <dt>Governor ID</dt>
+            <dt>{t("gid.l")}</dt>
             <dd>
               {app.governorId}
-              <button className="copy-btn" onClick={() => onCopy(app.governorId)}>
-                Copy
-              </button>
+              <button className="copy-btn" onClick={() => onCopy(app.governorId)}>{t("ad.copy")}</button>
             </dd>
           </div>
           <div>
-            <dt>Submitted</dt>
+            <dt>{t("ad.subm")}</dt>
             <dd>{formatDate(app.createdAt)}</dd>
           </div>
           <div>
-            <dt>Planning T5 before KvK1</dt>
-            <dd>{app.t5Plan || "Not answered"}</dd>
+            <dt>{t("ad.t5")}</dt>
+            <dd>{yn(app.t5Plan)}</dd>
           </div>
           <div>
-            <dt>Share account 24/7</dt>
-            <dd>{app.shareAccount || "Not answered"}</dd>
+            <dt>{t("ad.share")}</dt>
+            <dd>{yn(app.shareAccount)}</dd>
           </div>
         </dl>
 
+        <RewardInput app={app} onReward={onReward} />
+
         <div className="app-actions">
-          <button
-            className="btn btn-success"
-            disabled={app.status === "Approved"}
-            onClick={() => onStatus(app, "Approved")}
-          >
-            Approve
+          <button className="btn btn-success" disabled={app.status === "Approved"} onClick={() => onStatus(app, "Approved")}>
+            {t("ad.ap")}
           </button>
-          <button
-            className="btn btn-danger"
-            disabled={app.status === "Rejected"}
-            onClick={() => onStatus(app, "Rejected")}
-          >
-            Reject
+          <button className="btn btn-danger" disabled={app.status === "Rejected"} onClick={() => onStatus(app, "Rejected")}>
+            {t("ad.rj")}
           </button>
-          <button
-            className="btn btn-outline"
-            disabled={app.status === "Pending"}
-            onClick={() => onStatus(app, "Pending")}
-          >
-            Reset
+          <button className="btn btn-outline" disabled={app.status === "Pending"} onClick={() => onStatus(app, "Pending")}>
+            {t("ad.rs")}
           </button>
-          <button
-            className="btn btn-ghost danger-text"
-            onClick={() => {
-              if (window.confirm(`Delete the application from ${app.playerName}? This cannot be undone.`))
-                onDelete(app);
-            }}
-          >
-            Delete
-          </button>
+          <button className="btn btn-ghost danger-text" onClick={() => onDelete(app)}>{t("ad.del")}</button>
         </div>
       </div>
 
@@ -1113,11 +1238,11 @@ function ApplicationCard({ app, onStatus, onDelete, onZoom, onCopy }) {
         {viewFields(app).map((f, i) => (
           <figure key={f.key} className="thumb">
             <button type="button" onClick={() => onZoom(app, i)}>
-              <img src={f.src} alt={f.label} loading="lazy" />
+              <img src={f.src} alt={viewLabel(t, f)} loading="lazy" />
               <span className="thumb-num">{i + 1}</span>
-              <span className="thumb-zoom">Click to enlarge</span>
+              <span className="thumb-zoom">{t("ad.zoom")}</span>
             </button>
-            <figcaption>{f.label}</figcaption>
+            <figcaption>{viewLabel(t, f)}</figcaption>
           </figure>
         ))}
       </div>
@@ -1126,31 +1251,33 @@ function ApplicationCard({ app, onStatus, onDelete, onZoom, onCopy }) {
 }
 
 function AdminDashboard({ isOpen, onToggleOpen }) {
+  const { t } = useT();
   const [apps, setApps] = useState([]);
   const [filter, setFilter] = useState("All");
   const [sort, setSort] = useState("newest");
+  const [rewardFilter, setRewardFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [zoom, setZoom] = useState(null); // { app, index }
   const [limit, setLimit] = useState(20);
   const [toast, setToast] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [deleting, setDeleting] = useState(false);
   const timer = useRef(null);
 
   async function reload() {
     try {
       setApps(await loadApplications());
     } catch {
-      showToast("Could not load applications. Try signing in again.");
+      showToast(t("ad.tFail"));
     }
   }
 
-  // Load now, then refresh every 10 seconds so new applications appear automatically.
   useEffect(() => {
     reload();
-    const t = setInterval(reload, 10000);
-    return () => clearInterval(t);
+    const timerId = setInterval(reload, 10000);
+    return () => clearInterval(timerId);
   }, []);
 
-  // Lightbox keyboard controls.
   useEffect(() => {
     if (!zoom) return;
     const onKey = (e) => {
@@ -1180,13 +1307,31 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
     try {
       await updateStatus(app.id, status);
       setApps((cur) => cur.map((a) => (a.id === app.id ? { ...a, status } : a)));
-      showToast(`${app.playerName} marked as ${status}.`, async () => {
+      showToast(t("ad.tMark", { name: app.playerName, status: t("s." + status) }), async () => {
         await updateStatus(app.id, previous);
         setApps((cur) => cur.map((a) => (a.id === app.id ? { ...a, status: previous } : a)));
         setToast(null);
       });
     } catch {
-      showToast("Could not update. Please sign in again.");
+      showToast(t("ad.tFail"));
+    }
+  }
+
+  async function setReward(app, rewardRank) {
+    const previous = app.rewardRank;
+    try {
+      await updateReward(app.id, rewardRank);
+      setApps((cur) => cur.map((a) => (a.id === app.id ? { ...a, rewardRank } : a)));
+      showToast(
+        rewardRank ? t("ad.tRew", { name: app.playerName, n: rewardRank }) : t("ad.tRewC", { name: app.playerName }),
+        async () => {
+          await updateReward(app.id, previous);
+          setApps((cur) => cur.map((a) => (a.id === app.id ? { ...a, rewardRank: previous } : a)));
+          setToast(null);
+        }
+      );
+    } catch {
+      showToast(t("ad.tFail"));
     }
   }
 
@@ -1194,25 +1339,52 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
     try {
       await deleteApplication(app);
       setApps((cur) => cur.filter((a) => a.id !== app.id));
-      showToast(`${app.playerName}'s application was deleted.`);
+      showToast(t("ad.tDel", { name: app.playerName }));
     } catch {
-      showToast("Could not delete. Please sign in again.");
+      showToast(t("ad.tFail"));
     }
   }
 
+  async function confirmRemove() {
+    if (!confirmDelete) return;
+    setDeleting(true);
+    await remove(confirmDelete);
+    setDeleting(false);
+    setConfirmDelete(null);
+  }
+
+  useEffect(() => {
+    if (!confirmDelete) return;
+    const onKey = (e) => {
+      if (e.key === "Escape" && !deleting) setConfirmDelete(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmDelete, deleting]);
+
   function copy(text) {
     navigator.clipboard?.writeText(text);
-    showToast(`Copied Governor ID ${text}.`);
+    showToast(t("ad.tCopy", { id: text }));
   }
+
+  const rwLabel = (v) =>
+    v === "all" ? t("rw.all") : v === "has" ? t("rw.has") : v === "none" ? t("rw.none") : t("rw.topN", { n: v });
 
   const q = search.trim().toLowerCase();
   const visible = apps
     .filter(
       (a) =>
         (filter === "All" || a.status === filter) &&
-        (!q || a.playerName.toLowerCase().includes(q) || a.governorId.includes(q))
+        (!q || a.playerName.toLowerCase().includes(q) || a.governorId.includes(q)) &&
+        (rewardFilter === "all" ||
+          (rewardFilter === "has" && a.rewardRank != null) ||
+          (rewardFilter === "none" && a.rewardRank == null) ||
+          (/^\d+$/.test(rewardFilter) && a.rewardRank != null && a.rewardRank <= Number(rewardFilter)))
     )
     .sort((a, b) => {
+      const ra = a.rewardRank ?? Infinity;
+      const rb = b.rewardRank ?? Infinity;
+      if (ra !== rb) return ra - rb;
       if (sort === "oldest") return new Date(a.createdAt) - new Date(b.createdAt);
       if (sort === "pending") {
         const order = { Pending: 0, Approved: 1, Rejected: 2 };
@@ -1229,67 +1401,53 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
     <main className="container">
       <div className="dash-head">
         <div>
-          <h2>Admin Dashboard</h2>
-          <p className="muted">MGE applications &middot; Kingdom {KINGDOM}</p>
+          <h2>{t("ad.title")}</h2>
+          <p className="muted">{t("ad.sub", { kd: KINGDOM })}</p>
         </div>
         <div className="head-actions">
-          <button className="btn btn-outline" onClick={reload}>
-            Refresh
-          </button>
-          <button
-            className="btn btn-outline"
-            disabled={apps.length === 0}
-            onClick={() => downloadCsv(apps)}
-          >
-            Export CSV
+          <button className="btn btn-outline" onClick={reload}>{t("ad.refresh")}</button>
+          <button className="btn btn-outline" disabled={apps.length === 0} onClick={() => downloadCsv(apps)}>
+            {t("ad.csv")}
           </button>
         </div>
       </div>
 
       <div className={`card open-card ${isOpen ? "is-open" : "is-closed"}`}>
         <div>
-          <strong>Applications are {isOpen ? "OPEN" : "CLOSED"}</strong>
-          <p className="muted">
-            {isOpen
-              ? "Players can submit new applications right now."
-              : "Players cannot submit new applications. The Apply button is disabled."}
-          </p>
+          <strong>{isOpen ? t("ad.open") : t("ad.closed")}</strong>
+          <p className="muted">{isOpen ? t("ad.openD") : t("ad.closedD")}</p>
         </div>
         <button className={`btn ${isOpen ? "btn-danger" : "btn-success"}`} onClick={onToggleOpen}>
-          {isOpen ? "Close applications" : "Open applications"}
+          {isOpen ? t("ad.doClose") : t("ad.doOpen")}
         </button>
       </div>
 
       <div className="stats">
-        <div className="card stat"><strong>{apps.length}</strong><span>Total</span></div>
+        <div className="card stat"><strong>{apps.length}</strong><span>{t("ad.total")}</span></div>
         {STATUSES.map((s) => (
           <div className="card stat" key={s}>
             <strong>{count(s)}</strong>
-            <span>{s}</span>
+            <span>{t("s." + s)}</span>
           </div>
         ))}
       </div>
 
       <div className="toolbar">
-        <input
-          type="search"
-          placeholder="Search by name or Governor ID"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-        />
-        <select value={sort} onChange={(e) => setSort(e.target.value)} aria-label="Sort applications">
-          <option value="newest">Newest first</option>
-          <option value="oldest">Oldest first</option>
-          <option value="pending">Pending first</option>
+        <input type="search" placeholder={t("ad.search")} value={search} onChange={(e) => setSearch(e.target.value)} />
+        <select value={rewardFilter} onChange={(e) => setRewardFilter(e.target.value)} aria-label={t("rw.label")}>
+          {REWARD_FILTERS.map(([value]) => (
+            <option key={value} value={value}>{rwLabel(value)}</option>
+          ))}
+        </select>
+        <select value={sort} onChange={(e) => setSort(e.target.value)}>
+          <option value="newest">{t("ad.new")}</option>
+          <option value="oldest">{t("ad.old")}</option>
+          <option value="pending">{t("ad.pend")}</option>
         </select>
         <div className="chips">
           {["All", ...STATUSES].map((s) => (
-            <button
-              key={s}
-              className={`chip ${filter === s ? "active" : ""}`}
-              onClick={() => setFilter(s)}
-            >
-              {s}
+            <button key={s} className={`chip ${filter === s ? "active" : ""}`} onClick={() => setFilter(s)}>
+              {s === "All" ? t("ad.all") : t("s." + s)}
               {s !== "All" && <span className="chip-count">{count(s)}</span>}
             </button>
           ))}
@@ -1298,27 +1456,24 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
 
       {visible.length === 0 ? (
         <div className="card center empty">
-          <p className="muted">
-            {apps.length === 0
-              ? "No applications have been submitted yet."
-              : "No applications match your search or filter."}
-          </p>
+          <p className="muted">{apps.length === 0 ? t("ad.e0") : t("ad.e1")}</p>
         </div>
       ) : (
         <div className="app-list">
-          {visible.map((a) => (
+          {visible.slice(0, limit).map((a) => (
             <ApplicationCard
               key={a.id}
               app={a}
               onStatus={setStatus}
-              onDelete={remove}
+              onReward={setReward}
+              onDelete={(app) => setConfirmDelete(app)}
               onZoom={(app, index) => setZoom({ app, index })}
               onCopy={copy}
             />
           ))}
           {visible.length > limit && (
             <button className="btn btn-outline" onClick={() => setLimit((l) => l + 20)}>
-              Show more ({visible.length - limit} left)
+              {t("ad.more", { n: visible.length - limit })}
             </button>
           )}
         </div>
@@ -1329,19 +1484,32 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
           <div className="lightbox-inner" onClick={(e) => e.stopPropagation()}>
             <div className="lightbox-bar">
               <span>
-                {zoom.app.playerName} &middot; {zoomField.label} ({zoom.index + 1}/{zoomFields.length})
+                {zoom.app.playerName} &middot; {viewLabel(t, zoomField)} ({zoom.index + 1}/{zoomFields.length})
               </span>
-              <button className="btn btn-ghost" onClick={() => setZoom(null)}>
-                Close
-              </button>
+              <button className="btn btn-ghost" onClick={() => setZoom(null)}>{t("ad.close")}</button>
             </div>
-            <img src={zoomField.src} alt={zoomField.label} />
+            <img src={zoomField.src} alt={viewLabel(t, zoomField)} />
             <div className="lightbox-nav">
-              <button className="btn btn-outline" onClick={() => step(-1)}>
-                &larr; Previous
+              <button className="btn btn-outline" onClick={() => step(-1)}>{t("ad.prev")}</button>
+              <button className="btn btn-outline" onClick={() => step(1)}>{t("ad.next")}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmDelete && (
+        <div className="modal-backdrop" onClick={() => !deleting && setConfirmDelete(null)}>
+          <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="del-title" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-icon">!</div>
+            <h3 id="del-title">{t("ad.delT")}</h3>
+            <p className="muted">{t("ad.delD", { name: confirmDelete.playerName, id: confirmDelete.governorId })}</p>
+            <p className="modal-warn">{t("ad.delW")}</p>
+            <div className="modal-actions">
+              <button className="btn btn-outline" disabled={deleting} onClick={() => setConfirmDelete(null)}>
+                {t("ad.cancel")}
               </button>
-              <button className="btn btn-outline" onClick={() => step(1)}>
-                Next &rarr;
+              <button className="btn btn-danger" disabled={deleting} onClick={confirmRemove}>
+                {deleting ? t("ad.deling") : t("ad.delY")}
               </button>
             </div>
           </div>
@@ -1351,11 +1519,7 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
       {toast && (
         <div className="toast" role="status">
           <span>{toast.message}</span>
-          {toast.undo && (
-            <button className="toast-undo" onClick={toast.undo}>
-              Undo
-            </button>
-          )}
+          {toast.undo && <button className="toast-undo" onClick={toast.undo}>{t("ad.undo")}</button>}
         </div>
       )}
     </main>
@@ -1365,7 +1529,8 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
 /* ==========================================================================
    APP ROOT
    ========================================================================== */
-export default function App() {
+function AppInner() {
+  const { t } = useT();
   const [view, setView] = useState("home"); // home | apply | success | login | admin
   const [isAdmin, setIsAdmin] = useState(false);
   const [isOpen, setIsOpen] = useState(true);
@@ -1375,19 +1540,17 @@ export default function App() {
     window.scrollTo(0, 0);
   }, [view]);
 
-  // Admin session (handled securely by Supabase Auth)
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setIsAdmin(!!data.session));
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => setIsAdmin(!!session));
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // Open/closed switch is shared by every device
   useEffect(() => {
     const load = () => getOpen().then(setIsOpen);
     load();
-    const t = setInterval(load, 15000);
-    return () => clearInterval(t);
+    const timerId = setInterval(load, 15000);
+    return () => clearInterval(timerId);
   }, []);
 
   const go = (next) => setView(next === "admin" && !isAdmin ? "login" : next);
@@ -1404,7 +1567,7 @@ export default function App() {
       await saveOpen(next);
       setIsOpen(next);
     } catch {
-      alert("Could not change the setting. Please sign in again.");
+      alert(t("ad.setFail"));
     }
   }
 
@@ -1435,10 +1598,22 @@ export default function App() {
   );
 }
 
-/* ==========================================================================
-   NOTE: This is a front-end prototype. Applications live in the browser's
-   localStorage and the admin password is in this file, so applications are
-   only visible on the same browser/device and the password is NOT secure.
-   For real use, add a backend (database + file storage + server-side login)
-   and replace loadApplications / saveApplications / ADMIN_PASSWORD checks.
-   ========================================================================== */
+export default function App() {
+  const [lang, setLangState] = useState(loadLang);
+  const setLang = (code) => {
+    setLangState(code);
+    saveLang(code);
+  };
+  const t = useMemo(() => makeT(lang), [lang]);
+
+  useEffect(() => {
+    document.documentElement.lang = lang;
+    document.documentElement.dir = RTL_LANGS.includes(lang) ? "rtl" : "ltr";
+  }, [lang]);
+
+  return (
+    <LangContext.Provider value={{ lang, setLang, t }}>
+      <AppInner />
+    </LangContext.Provider>
+  );
+}
