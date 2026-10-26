@@ -1002,3 +1002,9 @@ input[type="text"], input[type="password"], input[type="search"], select {
   .thumbs { gap: 8px; }
   .modal-actions .btn { width: 100%; }
 }
+
+/* ===== Delete ALL popup ===== */
+.confirm-input { text-align: center; font-weight: 800; letter-spacing: 1px; margin-top: 4px; }
+@media (max-width: 760px) {
+  .head-actions .btn-danger { grid-column: 1 / -1; }
+}

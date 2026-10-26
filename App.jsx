@@ -15,6 +15,7 @@ const MAX_IMAGE_SIDE = 1000; // screenshots are downscaled to keep storage small
 const ACCEPTED_TYPES = ["image/png", "image/jpeg", "image/webp"];
 const STATUSES = ["Pending", "Approved", "Rejected"];
 const MAX_REWARD_RANK = 9999; // must match the SQL check
+const DELETE_WORD = "DELETE"; // the word the owner must type to delete everything
 // [value, label] - a number means "Top 1 up to that number". Edit these to change the buttons.
 const REWARD_FILTERS = [
   ["all", "All players"],
@@ -172,6 +173,21 @@ async function deleteApplication(app) {
   const { error } = await supabase.from("applications").delete().eq("id", app.id);
   if (error) throw error;
   if (paths.length) await supabase.storage.from(BUCKET).remove(paths);
+}
+
+async function deleteAllApplications(apps) {
+  const urls = apps
+    .flatMap((a) => [a.charlesMartel, a.infantryEquipment, ...toList(a.militaryTech), ...toList(a.gearInventory), a.speedups])
+    .filter(Boolean);
+  const paths = urls.map((u) => u.split(`/${BUCKET}/`)[1]).filter(Boolean);
+  const { error } = await supabase
+    .from("applications")
+    .delete()
+    .neq("id", "00000000-0000-0000-0000-000000000000");
+  if (error) throw error;
+  for (let i = 0; i < paths.length; i += 100) {
+    await supabase.storage.from(BUCKET).remove(paths.slice(i, i + 100));
+  }
 }
 
 async function getOpen() {
@@ -1266,6 +1282,9 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
   const [toast, setToast] = useState(null);
   const [confirmDelete, setConfirmDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [confirmAll, setConfirmAll] = useState(false);
+  const [confirmText, setConfirmText] = useState("");
+  const [deletingAll, setDeletingAll] = useState(false);
   const timer = useRef(null);
 
   async function reload() {
@@ -1357,6 +1376,25 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
     setConfirmDelete(null);
   }
 
+  function closeAll() {
+    setConfirmAll(false);
+    setConfirmText("");
+  }
+
+  async function confirmRemoveAll() {
+    if (confirmText.trim().toUpperCase() !== DELETE_WORD) return;
+    setDeletingAll(true);
+    try {
+      await deleteAllApplications(apps);
+      setApps([]);
+      showToast(t("ad.tDelAll"));
+    } catch {
+      showToast(t("ad.tFail"));
+    }
+    setDeletingAll(false);
+    closeAll();
+  }
+
   useEffect(() => {
     if (!confirmDelete) return;
     const onKey = (e) => {
@@ -1412,6 +1450,9 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
           <button className="btn btn-outline" onClick={reload}>{t("ad.refresh")}</button>
           <button className="btn btn-outline" disabled={apps.length === 0} onClick={() => downloadCsv(apps)}>
             {t("ad.csv")}
+          </button>
+          <button className="btn btn-danger" disabled={apps.length === 0} onClick={() => setConfirmAll(true)}>
+            {t("ad.delAll")}
           </button>
         </div>
       </div>
@@ -1514,6 +1555,39 @@ function AdminDashboard({ isOpen, onToggleOpen }) {
               </button>
               <button className="btn btn-danger" disabled={deleting} onClick={confirmRemove}>
                 {deleting ? t("ad.deling") : t("ad.delY")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {confirmAll && (
+        <div className="modal-backdrop" onClick={() => !deletingAll && closeAll()}>
+          <div className="modal" role="alertdialog" aria-modal="true" aria-labelledby="delall-title" onClick={(e) => e.stopPropagation()}>
+            <div className="modal-icon">!</div>
+            <h3 id="delall-title">{t("ad.delAllT")}</h3>
+            <p className="muted">{t("ad.delAllD", { n: apps.length })}</p>
+            <p className="modal-warn">{t("ad.delAllW")}</p>
+            <p className="muted">{t("ad.delAllType", { word: DELETE_WORD })}</p>
+            <input
+              type="text"
+              className="confirm-input"
+              value={confirmText}
+              placeholder={DELETE_WORD}
+              autoComplete="off"
+              disabled={deletingAll}
+              onChange={(e) => setConfirmText(e.target.value)}
+            />
+            <div className="modal-actions">
+              <button className="btn btn-outline" disabled={deletingAll} onClick={closeAll}>
+                {t("ad.cancel")}
+              </button>
+              <button
+                className="btn btn-danger"
+                disabled={deletingAll || confirmText.trim().toUpperCase() !== DELETE_WORD}
+                onClick={confirmRemoveAll}
+              >
+                {deletingAll ? t("ad.deling") : t("ad.delAllY")}
               </button>
             </div>
           </div>
