@@ -1246,10 +1246,63 @@ const T = Object.fromEntries(Object.entries(BASE).map(([k, v]) => [k, { ...v, ..
 // To add a language: create a const (copy `en`, translate the values) and add it to T above,
 // e.g.  const it = {...};   then   const T = { en, ..., it };
 
-export function makeT(lang) {
-  const dict = T[lang] || en;
+/* ===== Automatic translation for languages without a hand-written dictionary ===== */
+export const BUILTIN = Object.keys(T);
+const AUTO_KEY = "xtit-auto-v1-";
+const GCODE = { he: "iw" };
+
+function protect(s) {
+  const toks = [];
+  const out = s.replace(/\{\w+\}/g, (m) => {
+    toks.push(m);
+    return `XQ${toks.length - 1}Q`;
+  });
+  return { out, toks };
+}
+function restore(s, toks) {
+  return s.replace(/X\s?Q\s?(\d+)\s?Q/gi, (m, i) => toks[Number(i)] ?? m);
+}
+
+async function translateOne(text, lang) {
+  const { out, toks } = protect(text);
+  const url =
+    "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=" +
+    (GCODE[lang] || lang) +
+    "&dt=t&q=" +
+    encodeURIComponent(out);
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("translate failed");
+  const data = await res.json();
+  return restore(data[0].map((p) => p[0]).join(""), toks);
+}
+
+export async function loadAuto(lang, onUpdate) {
+  let dict = {};
+  try { dict = JSON.parse(localStorage.getItem(AUTO_KEY + lang) || "{}"); } catch {}
+  onUpdate({ ...dict });
+  const src = T.en;
+  const todo = Object.keys(src).filter(
+    (k) => !dict[k] && /[A-Za-z]/.test(String(src[k]).replace(/\{\w+\}/g, ""))
+  );
+  let i = 0;
+  let done = 0;
+  async function worker() {
+    while (i < todo.length) {
+      const k = todo[i++];
+      try { dict[k] = await translateOne(src[k], lang); } catch {}
+      done++;
+      if (done % 25 === 0) onUpdate({ ...dict });
+    }
+  }
+  await Promise.all(Array.from({ length: 8 }, worker));
+  try { localStorage.setItem(AUTO_KEY + lang, JSON.stringify(dict)); } catch {}
+  onUpdate({ ...dict });
+}
+
+export function makeT(lang, extra) {
+  const dict = T[lang] || { ...T.en, ...(extra || {}) };
   return (key, vars) => {
-    let s = dict[key] ?? en[key] ?? key;
+    let s = dict[key] ?? T.en[key] ?? key;
     if (vars) for (const k in vars) s = s.split(`{${k}}`).join(String(vars[k]));
     return s;
   };

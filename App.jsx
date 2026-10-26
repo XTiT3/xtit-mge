@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "./supabase.js";
-import { LANGUAGES, RTL_LANGS, LangContext, useT, makeT, loadLang, saveLang } from "./src/i18n.js";
+import { LANGUAGES, RTL_LANGS, LangContext, useT, makeT, loadLang, saveLang, BUILTIN, loadAuto } from "./src/i18n.js";
 
 /* ==========================================================================
    CONFIG - change these values easily
@@ -1682,7 +1682,17 @@ export default function App() {
     setLangState(code);
     saveLang(code);
   };
-  const t = useMemo(() => makeT(lang), [lang]);
+  const [extra, setExtra] = useState(null);
+
+  useEffect(() => {
+    setExtra(null);
+    if (BUILTIN.includes(lang)) return;
+    let live = true;
+    loadAuto(lang, (d) => live && setExtra(d));
+    return () => { live = false; };
+  }, [lang]);
+
+  const t = useMemo(() => makeT(lang, extra), [lang, extra]);
 
   useEffect(() => {
     document.documentElement.lang = lang;
