@@ -1248,55 +1248,146 @@ const T = Object.fromEntries(Object.entries(BASE).map(([k, v]) => [k, { ...v, ..
 
 /* ===== Automatic translation for languages without a hand-written dictionary ===== */
 export const BUILTIN = Object.keys(T);
-const AUTO_KEY = "xtit-auto-v1-";
+const AUTO_KEY = "xtit-auto-v2-";
 const GCODE = { he: "iw" };
 
+// Game words that must stay in English in every language
+const KEEP = ["The Mightiest Governor", "Rise of Kingdoms", "Charles Martel", "XTiT", "KvK1", "MGE", "T5", "PNG", "JPG", "WEBP", "CSV"];
+const KEEP_RE = new RegExp(KEEP.map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "g");
+const TOKEN_RE = /[{｛]\s*(\d+)\s*[}｝]/g;
+const HAS_TOKEN = /[{｛]\s*\d+\s*[}｝]/;
+
+// Remove broken translations saved by the old version
+try {
+  Object.keys(localStorage)
+    .filter((k) => k.startsWith("xtit-auto-v1-"))
+    .forEach((k) => localStorage.removeItem(k));
+} catch {}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const needsTranslation = (s) => /[A-Za-z]/.test(String(s).replace(/\{\w+\}/g, "").replace(KEEP_RE, ""));
+
+// Serbian: Google returns Cyrillic, the menu says "Srpski" (Latin)
+const SR_C = "АБВГДЂЕЖЗИЈКЛЉМНЊОПРСТЋУФХЦЧЏШабвгдђежзијклљмнњопрстћуфхцчџш";
+const SR_L = ["A","B","V","G","D","Đ","E","Ž","Z","I","J","K","L","Lj","M","N","Nj","O","P","R","S","T","Ć","U","F","H","C","Č","Dž","Š",
+              "a","b","v","g","d","đ","e","ž","z","i","j","k","l","lj","m","n","nj","o","p","r","s","t","ć","u","f","h","c","č","dž","š"];
+const toLatin = (s) => s.replace(/[\u0400-\u04FF]/g, (ch) => {
+  const i = SR_C.indexOf(ch);
+  return i < 0 ? ch : SR_L[i];
+});
+
+// Turn {name} and game words into {0}, {1}... so Google leaves them alone
 function protect(s) {
   const toks = [];
-  const out = s.replace(/\{\w+\}/g, (m) => {
+  const keep = (m) => {
     toks.push(m);
-    return `XQ${toks.length - 1}Q`;
-  });
+    return `{${toks.length - 1}}`;
+  };
+  const out = String(s).replace(/\{\w+\}/g, keep).replace(KEEP_RE, keep);
   return { out, toks };
 }
-function restore(s, toks) {
-  return s.replace(/X\s?Q\s?(\d+)\s?Q/gi, (m, i) => toks[Number(i)] ?? m);
+
+// Put them back. Returns null if Google broke a placeholder (then English is used and it retries later)
+function restore(s, toks, lang) {
+  const seen = new Set();
+  let out = String(s).trim().replace(TOKEN_RE, (m, i) => {
+    const v = toks[Number(i)];
+    if (v === undefined) return m;
+    seen.add(i);
+    return v;
+  });
+  if (!out || seen.size !== toks.length || HAS_TOKEN.test(out)) return null;
+  if (lang === "sr") out = toLatin(out);
+  return out;
 }
 
-async function translateOne(text, lang) {
-  const { out, toks } = protect(text);
+async function gtranslate(text, lang) {
   const url =
     "https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=" +
-    (GCODE[lang] || lang) +
+    encodeURIComponent(GCODE[lang] || lang) +
     "&dt=t&q=" +
-    encodeURIComponent(out);
-  const res = await fetch(url);
-  if (!res.ok) throw new Error("translate failed");
-  const data = await res.json();
-  return restore(data[0].map((p) => p[0]).join(""), toks);
+    encodeURIComponent(text);
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        return (data[0] || []).map((p) => p[0] || "").join("");
+      }
+    } catch {}
+    await sleep(800 * 2 ** attempt); // wait longer after each failure (rate limit)
+  }
+  throw new Error("translate failed");
 }
 
-export async function loadAuto(lang, onUpdate) {
-  let dict = {};
-  try { dict = JSON.parse(localStorage.getItem(AUTO_KEY + lang) || "{}"); } catch {}
-  onUpdate({ ...dict });
-  const src = T.en;
-  const todo = Object.keys(src).filter(
-    (k) => !dict[k] && /[A-Za-z]/.test(String(src[k]).replace(/\{\w+\}/g, ""))
-  );
-  let i = 0;
-  let done = 0;
-  async function worker() {
-    while (i < todo.length) {
-      const k = todo[i++];
-      try { dict[k] = await translateOne(src[k], lang); } catch {}
-      done++;
-      if (done % 25 === 0) onUpdate({ ...dict });
+// Many short texts in one request, one per line
+function makeBatches(items, maxChars) {
+  const batches = [];
+  let cur = [];
+  let len = 0;
+  for (const it of items) {
+    if (cur.length && len + it.out.length > maxChars) {
+      batches.push(cur);
+      cur = [];
+      len = 0;
     }
+    cur.push(it);
+    len += it.out.length + 1;
   }
-  await Promise.all(Array.from({ length: 8 }, worker));
-  try { localStorage.setItem(AUTO_KEY + lang, JSON.stringify(dict)); } catch {}
-  onUpdate({ ...dict });
+  if (cur.length) batches.push(cur);
+  return batches;
+}
+
+async function translateBatch(batch, lang, dict) {
+  try {
+    const text = await gtranslate(batch.map((b) => b.out).join("\n"), lang);
+    const lines = text.replace(/\s+$/, "").split(/\r?\n/);
+    if (lines.length === batch.length) {
+      batch.forEach((b, i) => {
+        const r = restore(lines[i], b.toks, lang);
+        if (r) dict[b.k] = r;
+      });
+      return;
+    }
+  } catch {}
+  // Lines did not match up - translate this batch one by one instead
+  for (const b of batch) {
+    try {
+      const r = restore(await gtranslate(b.out, lang), b.toks, lang);
+      if (r) dict[b.k] = r;
+    } catch {}
+  }
+}
+
+export async function loadAuto(lang, onUpdate, isCancelled = () => false) {
+  const cacheKey = AUTO_KEY + lang;
+  let dict = {};
+  try { dict = JSON.parse(localStorage.getItem(cacheKey) || "{}"); } catch {}
+  const save = () => {
+    try { localStorage.setItem(cacheKey, JSON.stringify(dict)); } catch {}
+  };
+  const src = T.en;
+  const missing = () => Object.keys(src).filter((k) => !dict[k] && needsTranslation(src[k]));
+
+  onUpdate({ ...dict }, missing().length === 0);
+
+  // Up to 3 rounds: big batches first, then smaller ones for anything that failed
+  for (let round = 0; round < 3 && missing().length && !isCancelled(); round++) {
+    const items = missing().map((k) => ({ k, ...protect(src[k]) }));
+    const batches = makeBatches(items, round === 0 ? 1500 : 400);
+    let next = 0;
+    const worker = async () => {
+      while (next < batches.length && !isCancelled()) {
+        await translateBatch(batches[next++], lang, dict);
+        save();
+        if (!isCancelled()) onUpdate({ ...dict }, false);
+      }
+    };
+    await Promise.all(Array.from({ length: 3 }, worker));
+  }
+
+  save();
+  if (!isCancelled()) onUpdate({ ...dict }, true);
 }
 
 export function makeT(lang, extra) {
@@ -1308,5 +1399,5 @@ export function makeT(lang, extra) {
   };
 }
 
-export const LangContext = createContext({ lang: "en", setLang: () => {}, t: makeT("en") });
+export const LangContext = createContext({ lang: "en", setLang: () => {}, t: makeT("en"), translating: false });
 export const useT = () => useContext(LangContext);

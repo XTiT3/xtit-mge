@@ -1008,3 +1008,11 @@ input[type="text"], input[type="password"], input[type="search"], select {
 @media (max-width: 760px) {
   .head-actions .btn-danger { grid-column: 1 / -1; }
 }
+
+/* ===== Language loading spinner ===== */
+.lang-busy {
+  flex: none; width: 14px; height: 14px; border-radius: 50%;
+  border: 2px solid var(--border); border-top-color: var(--gold);
+  animation: lang-spin .8s linear infinite;
+}
+@keyframes lang-spin { to { transform: rotate(360deg); } }

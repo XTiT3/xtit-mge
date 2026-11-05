@@ -227,8 +227,10 @@ function compressImage(file) {
   });
 }
 
-function formatDate(iso) {
-  return new Date(iso).toLocaleString(undefined, {
+function formatDate(iso, lang) {
+  let locale;
+  try { locale = lang ? Intl.DateTimeFormat.supportedLocalesOf(lang)[0] : undefined; } catch {}
+  return new Date(iso).toLocaleString(locale, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -271,10 +273,10 @@ function Logo({ onClick }) {
 }
 
 function LanguageSelect() {
-  const { lang, setLang, t } = useT();
+  const { lang, setLang, t, translating } = useT();
   return (
     <label className="lang-wrap" title={t("lang")}>
-      <span aria-hidden="true">🌐</span>
+      {translating ? <span className="lang-busy" aria-hidden="true" /> : <span aria-hidden="true">🌐</span>}
       <select className="lang-select" value={lang} onChange={(e) => setLang(e.target.value)} aria-label={t("lang")}>
         {LANGUAGES.map((l) => (
           <option key={l.code} value={l.code}>{l.name}</option>
@@ -1200,7 +1202,7 @@ function RewardInput({ app, onReward }) {
 }
 
 function ApplicationCard({ app, onStatus, onReward, onDelete, onZoom, onCopy }) {
-  const { t } = useT();
+  const { t, lang } = useT();
   const statusKey = app.status.toLowerCase();
   const yn = (v) => (v ? t(v === "Yes" ? "yes" : "no") : t("ad.na"));
 
@@ -1226,7 +1228,7 @@ function ApplicationCard({ app, onStatus, onReward, onDelete, onZoom, onCopy }) 
           </div>
           <div>
             <dt>{t("ad.subm")}</dt>
-            <dd>{formatDate(app.createdAt)}</dd>
+            <dd>{formatDate(app.createdAt, lang)}</dd>
           </div>
           <div>
             <dt>{t("ad.t5")}</dt>
@@ -1683,12 +1685,23 @@ export default function App() {
     saveLang(code);
   };
   const [extra, setExtra] = useState(null);
+  const [translating, setTranslating] = useState(false);
 
   useEffect(() => {
     setExtra(null);
+    setTranslating(false);
     if (BUILTIN.includes(lang)) return;
     let live = true;
-    loadAuto(lang, (d) => live && setExtra(d));
+    setTranslating(true);
+    loadAuto(
+      lang,
+      (d, done) => {
+        if (!live) return;
+        setExtra(d);
+        if (done) setTranslating(false);
+      },
+      () => !live
+    );
     return () => { live = false; };
   }, [lang]);
 
@@ -1700,7 +1713,7 @@ export default function App() {
   }, [lang]);
 
   return (
-    <LangContext.Provider value={{ lang, setLang, t }}>
+    <LangContext.Provider value={{ lang, setLang, t, translating }}>
       <AppInner />
     </LangContext.Provider>
   );
